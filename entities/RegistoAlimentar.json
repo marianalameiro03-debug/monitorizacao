@@ -1,0 +1,48 @@
+{
+  "name": "RegistoAlimentacao",
+  "type": "object",
+  "properties": {
+    "residente_id": {
+      "type": "string",
+      "description": "ID do residente"
+    },
+    "data": {
+      "type": "string",
+      "format": "date",
+      "description": "Data da refei\u00e7\u00e3o"
+    },
+    "refeicao": {
+      "type": "string",
+      "enum": [
+        "pequeno_almoco",
+        "almoco",
+        "lanche",
+        "jantar"
+      ],
+      "description": "Tipo de refei\u00e7\u00e3o"
+    },
+    "nivel_ingestao": {
+      "type": "string",
+      "enum": [
+        "normal",
+        "parcial",
+        "recusou"
+      ],
+      "description": "N\u00edvel de ingest\u00e3o alimentar"
+    },
+    "registado_por": {
+      "type": "string",
+      "description": "Email de quem registou"
+    },
+    "notas": {
+      "type": "string",
+      "description": "Notas opcionais sobre a refei\u00e7\u00e3o"
+    }
+  },
+  "required": [
+    "residente_id",
+    "data",
+    "refeicao",
+    "nivel_ingestao"
+  ]
+}

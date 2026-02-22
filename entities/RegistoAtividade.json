@@ -1,0 +1,53 @@
+{
+  "name": "RegistoAtividade",
+  "type": "object",
+  "properties": {
+    "residente_id": {
+      "type": "string",
+      "description": "ID do residente"
+    },
+    "data": {
+      "type": "string",
+      "format": "date",
+      "description": "Data do registo"
+    },
+    "hora": {
+      "type": "integer",
+      "description": "Hora do dia (0-23)"
+    },
+    "intensidade_movimento": {
+      "type": "number",
+      "description": "Intensidade de movimento (0-100)"
+    },
+    "picos_movimento": {
+      "type": "integer",
+      "description": "N\u00famero de picos de movimento detectados"
+    },
+    "minutos_inatividade": {
+      "type": "integer",
+      "description": "Minutos de inatividade na hora"
+    },
+    "evento_brusco": {
+      "type": "boolean",
+      "default": false,
+      "description": "Se houve evento brusco detectado"
+    },
+    "classificacao_dia": {
+      "type": "string",
+      "enum": [
+        "muito_ativo",
+        "moderadamente_ativo",
+        "calmo",
+        "em_repouso",
+        "irregular",
+        "evento_brusco"
+      ],
+      "description": "Classifica\u00e7\u00e3o autom\u00e1tica do per\u00edodo"
+    }
+  },
+  "required": [
+    "residente_id",
+    "data",
+    "hora"
+  ]
+}

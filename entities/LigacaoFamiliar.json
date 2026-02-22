@@ -1,0 +1,37 @@
+{
+  "name": "LigacaoFamiliar",
+  "type": "object",
+  "properties": {
+    "residente_id": {
+      "type": "string",
+      "description": "ID do residente"
+    },
+    "familiar_email": {
+      "type": "string",
+      "description": "Email do familiar (User)"
+    },
+    "parentesco": {
+      "type": "string",
+      "description": "Rela\u00e7\u00e3o familiar (filho/a, neto/a, etc.)"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pendente",
+        "aprovado",
+        "rejeitado"
+      ],
+      "default": "aprovado",
+      "description": "Status da liga\u00e7\u00e3o"
+    },
+    "data_pedido": {
+      "type": "string",
+      "format": "date",
+      "description": "Data do pedido de liga\u00e7\u00e3o"
+    }
+  },
+  "required": [
+    "residente_id",
+    "familiar_email"
+  ]
+}

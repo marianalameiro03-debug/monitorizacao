@@ -1,0 +1,73 @@
+{
+  "name": "Consulta",
+  "type": "object",
+  "properties": {
+    "residente_id": {
+      "type": "string",
+      "description": "ID do residente"
+    },
+    "data_consulta": {
+      "type": "string",
+      "format": "date",
+      "description": "Data da consulta"
+    },
+    "tipo_consulta": {
+      "type": "string",
+      "enum": [
+        "rotina",
+        "especialidade",
+        "urgencia",
+        "seguimento",
+        "outro"
+      ],
+      "description": "Tipo de consulta"
+    },
+    "especialidade": {
+      "type": "string",
+      "description": "Especialidade m\u00e9dica (ex: cardiologia, geriatria)"
+    },
+    "audio_url": {
+      "type": "string",
+      "description": "URL do \u00e1udio gravado"
+    },
+    "transcricao": {
+      "type": "string",
+      "description": "Transcri\u00e7\u00e3o autom\u00e1tica do \u00e1udio"
+    },
+    "resumo_ia": {
+      "type": "string",
+      "description": "Resumo gerado pela IA"
+    },
+    "temas_principais": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Lista de temas abordados"
+    },
+    "recomendacoes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Recomenda\u00e7\u00f5es m\u00e9dicas mencionadas"
+    },
+    "proximos_passos": {
+      "type": "string",
+      "description": "Pr\u00f3ximos passos mencionados"
+    },
+    "carregado_por": {
+      "type": "string",
+      "description": "Email de quem carregou a consulta"
+    },
+    "notas_adicionais": {
+      "type": "string",
+      "description": "Notas adicionais do funcion\u00e1rio"
+    }
+  },
+  "required": [
+    "residente_id",
+    "data_consulta",
+    "tipo_consulta"
+  ]
+}

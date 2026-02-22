@@ -1,0 +1,40 @@
+{
+  "name": "Residente",
+  "type": "object",
+  "properties": {
+    "nome": {
+      "type": "string",
+      "description": "Nome completo do residente"
+    },
+    "codigo": {
+      "type": "string",
+      "description": "C\u00f3digo \u00fanico de identifica\u00e7\u00e3o do residente"
+    },
+    "quarto": {
+      "type": "string",
+      "description": "N\u00famero do quarto"
+    },
+    "data_nascimento": {
+      "type": "string",
+      "format": "date",
+      "description": "Data de nascimento"
+    },
+    "sensor_id": {
+      "type": "string",
+      "description": "ID do sensor de movimento associado"
+    },
+    "baseline_atividade": {
+      "type": "number",
+      "description": "Linha de base de atividade m\u00e9dia do residente"
+    },
+    "ativo": {
+      "type": "boolean",
+      "default": true,
+      "description": "Se o residente est\u00e1 ativo no sistema"
+    }
+  },
+  "required": [
+    "nome",
+    "codigo"
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "name": "Alerta",
+  "type": "object",
+  "properties": {
+    "residente_id": {
+      "type": "string",
+      "description": "ID do residente"
+    },
+    "tipo": {
+      "type": "string",
+      "enum": [
+        "alteracao_rotina",
+        "menos_atividade",
+        "mais_agitacao",
+        "alteracao_noturna",
+        "evento_brusco"
+      ],
+      "description": "Tipo de alerta"
+    },
+    "gravidade": {
+      "type": "string",
+      "enum": [
+        "verde",
+        "amarelo",
+        "laranja",
+        "vermelho"
+      ],
+      "description": "N\u00edvel de gravidade com cor"
+    },
+    "titulo": {
+      "type": "string",
+      "description": "T\u00edtulo do alerta"
+    },
+    "descricao": {
+      "type": "string",
+      "description": "Descri\u00e7\u00e3o em linguagem simples"
+    },
+    "indice_estabilidade": {
+      "type": "number",
+      "description": "\u00cdndice de estabilidade da rotina (0-100)"
+    },
+    "data_detecao": {
+      "type": "string",
+      "format": "date",
+      "description": "Data de dete\u00e7\u00e3o"
+    },
+    "lido": {
+      "type": "boolean",
+      "default": false,
+      "description": "Se o alerta foi lido"
+    }
+  },
+  "required": [
+    "residente_id",
+    "tipo",
+    "gravidade",
+    "titulo",
+    "descricao"
+  ]
+}
