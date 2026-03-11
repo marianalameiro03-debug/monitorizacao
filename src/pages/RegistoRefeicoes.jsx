@@ -1,83 +1,101 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { base44 } from '@/api/base44Client';
+import { supabase } from '@/api/base44Client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { UtensilsCrossed, Check, MinusCircle, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
 const refeicoes = [
   { id: 'pequeno_almoco', label: 'Pequeno-almoço', icon: '🌅' },
-  { id: 'almoco', label: 'Almoço', icon: '🍽️' },
-  { id: 'lanche', label: 'Lanche', icon: '☕' },
-  { id: 'jantar', label: 'Jantar', icon: '🌙' }
+  { id: 'almoco',         label: 'Almoço',          icon: '🍽️' },
+  { id: 'lanche',         label: 'Lanche',           icon: '☕' },
+  { id: 'jantar',         label: 'Jantar',           icon: '🌙' }
 ];
 
 const niveis = [
-  { id: 'normal', label: 'Comeu normalmente', icon: Check, color: 'bg-green-50 hover:bg-green-100 border-green-200 text-green-700' },
-  { id: 'parcial', label: 'Comeu parcialmente', icon: MinusCircle, color: 'bg-yellow-50 hover:bg-yellow-100 border-yellow-200 text-yellow-700' },
-  { id: 'recusou', label: 'Recusou', icon: XCircle, color: 'bg-red-50 hover:bg-red-100 border-red-200 text-red-700' }
+  { id: 'normal',  label: 'Comeu normalmente',   icon: Check,       color: 'bg-green-50 hover:bg-green-100 border-green-200 text-green-700'   },
+  { id: 'parcial', label: 'Comeu parcialmente',  icon: MinusCircle, color: 'bg-yellow-50 hover:bg-yellow-100 border-yellow-200 text-yellow-700' },
+  { id: 'recusou', label: 'Recusou',             icon: XCircle,     color: 'bg-red-50 hover:bg-red-100 border-red-200 text-red-700'             }
 ];
 
 export default function RegistoRefeicoes() {
   const [user, setUser] = useState(null);
-  const [selectedRefeicao, setSelectedRefeicao] = useState(null);
   const queryClient = useQueryClient();
-
   const hoje = new Date().toISOString().split('T')[0];
 
-  // Fetch user
+  // ── Auth ────────────────────────────────────────────────────
   useQuery({
     queryKey: ['currentUser'],
     queryFn: async () => {
-      const userData = await base44.auth.me();
-      if (userData.role !== 'admin' && userData.role !== 'staff') {
-        base44.auth.redirectToLogin();
+      const { data: { user }, error } = await supabase.auth.getUser();
+      if (error || !user) { window.location.href = '/login'; return null; }
+      const role = user.user_metadata?.role;
+      if (role !== 'admin' && role !== 'staff') {
+        window.location.href = '/';
+        return null;
       }
-      setUser(userData);
-      return userData;
+      setUser(user);
+      return user;
     }
   });
 
-  // Fetch todos os residentes ativos
+  // ── Residentes ativos ───────────────────────────────────────
   const { data: residentes = [], isLoading } = useQuery({
     queryKey: ['residentes-ativos'],
-    queryFn: () => base44.entities.Residente.filter({ ativo: true }),
-    enabled: !!user
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('Residente')
+        .select('*')
+        .eq('ativo', true);
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!user,
   });
 
-  // Fetch registos de hoje
+  // ── Registos de hoje ────────────────────────────────────────
   const { data: registosHoje = [] } = useQuery({
     queryKey: ['registos-alimentacao-hoje'],
-    queryFn: () => base44.entities.RegistoAlimentacao.filter({ data: hoje }),
-    enabled: !!user
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('RegistoAlimentacao')
+        .select('*')
+        .eq('data', hoje);
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!user,
   });
 
-  // Mutation para criar registo
+  // ── Criar registo ───────────────────────────────────────────
   const registarMutation = useMutation({
     mutationFn: async ({ residente_id, refeicao, nivel_ingestao }) => {
-      return await base44.entities.RegistoAlimentacao.create({
-        residente_id,
-        data: hoje,
-        refeicao,
-        nivel_ingestao,
-        registado_por: user.email
-      });
+      const { data, error } = await supabase
+        .from('RegistoAlimentacao')
+        .insert({
+          residente_id,
+          data: hoje,
+          refeicao,
+          nivel_ingestao,
+          registado_por: user.email,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['registos-alimentacao-hoje'] });
       toast.success('Registo guardado!');
+    },
+    onError: () => {
+      toast.error('Erro ao guardar registo. Tente novamente.');
     }
   });
 
-  const jaRegistado = (residente_id, refeicao_id) => {
-    return registosHoje.some(r => r.residente_id === residente_id && r.refeicao === refeicao_id);
-  };
-
-  const getRegistoAtual = (residente_id, refeicao_id) => {
-    return registosHoje.find(r => r.residente_id === residente_id && r.refeicao === refeicao_id);
-  };
+  const getRegistoAtual = (residente_id, refeicao_id) =>
+    registosHoje.find(r => r.residente_id === residente_id && r.refeicao === refeicao_id);
 
   if (isLoading) {
     return (
@@ -123,7 +141,7 @@ export default function RegistoRefeicoes() {
                         <span className="font-medium text-sm">{refeicao.label}</span>
                         {registado && <Check className="w-4 h-4 text-green-600 ml-auto" />}
                       </div>
-                      
+
                       {registado ? (
                         <div className="text-sm text-gray-600">
                           Registado: <span className="font-medium">
