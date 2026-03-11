@@ -1,39 +1,52 @@
-**Welcome to your Base44 project** 
+# App2
 
-**About**
+A React application built with Vite, Tailwind CSS, and the Anthropic Claude API.
 
-View and Edit  your app on [Base44.com](http://Base44.com) 
+## Prerequisites
 
-This project contains everything you need to run your app locally.
+- [Node.js](https://nodejs.org/) v18 or higher
+- An [Anthropic API key](https://console.anthropic.com)
 
-**Edit the code in your local development environment**
+## Getting Started
 
-Any change pushed to the repo will also be reflected in the Base44 Builder.
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/marianalameiro03-debug/app2.git
+   cd app2
+   ```
 
-**Prerequisites:** 
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
 
-1. Clone the repository using the project's Git URL 
-2. Navigate to the project directory
-3. Install dependencies: `npm install`
-4. Create an `.env.local` file and set the right environment variables
+3. **Create a `.env` file** at the root of the project and add your Anthropic API key:
+   ```
+   VITE_ANTHROPIC_API_KEY=your_anthropic_api_key_here
+   ```
 
+4. **Run the app locally**
+   ```bash
+   npm run dev
+   ```
+
+The app will be available at `http://localhost:5173`.
+
+## Build for Production
+
+```bash
+npm run build
 ```
-VITE_BASE44_APP_ID=your_app_id
-VITE_BASE44_APP_BASE_URL=your_backend_url
 
-e.g.
-VITE_BASE44_APP_ID=cbef744a8545c389ef439ea6
-VITE_BASE44_APP_BASE_URL=https://my-to-do-list-81bfaad7.base44.app
-```
+## Tech Stack
 
-Run the app: `npm run dev`
+- [React 18](https://react.dev/)
+- [Vite](https://vitejs.dev/)
+- [Tailwind CSS](https://tailwindcss.com/)
+- [Radix UI](https://www.radix-ui.com/)
+- [Anthropic Claude API](https://docs.anthropic.com/)
+- [React Router](https://reactrouter.com/)
 
-**Publish your changes**
+## ⚠️ Security Note
 
-Open [Base44.com](http://Base44.com) and click on Publish.
-
-**Docs & Support**
-
-Documentation: [https://docs.base44.com/Integrations/Using-GitHub](https://docs.base44.com/Integrations/Using-GitHub)
-
-Support: [https://app.base44.com/support](https://app.base44.com/support)
+Never commit your `.env` file to GitHub. Make sure `.env` is listed in your `.gitignore`.
