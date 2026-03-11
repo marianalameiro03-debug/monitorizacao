@@ -1,17 +1,27 @@
 import React, { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { createClient } from '@supabase/supabase-js';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Bell, Check, AlertTriangle, Info } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 
+// ─────────────────────────────────────────────────────────────
+// 🔑 Add your Supabase credentials to your .env file:
+//    VITE_SUPABASE_URL=https://your-project.supabase.co
+//    VITE_SUPABASE_ANON_KEY=your-anon-key
+// ─────────────────────────────────────────────────────────────
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+);
+
 const configCores = {
-  verde: { bg: 'bg-green-50', border: 'border-green-200', text: 'text-green-700', badge: 'bg-green-100' },
-  amarelo: { bg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-700', badge: 'bg-yellow-100' },
-  laranja: { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', badge: 'bg-orange-100' },
-  vermelho: { bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-700', badge: 'bg-red-100' },
+  verde:    { bg: 'bg-green-50',  border: 'border-green-200',  text: 'text-green-700',  badge: 'bg-green-100'  },
+  amarelo:  { bg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-700', badge: 'bg-yellow-100' },
+  laranja:  { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700', badge: 'bg-orange-100' },
+  vermelho: { bg: 'bg-red-50',    border: 'border-red-200',    text: 'text-red-700',    badge: 'bg-red-100'    },
 };
 
 export default function Alertas() {
@@ -19,51 +29,76 @@ export default function Alertas() {
   const [residente, setResidente] = useState(null);
   const queryClient = useQueryClient();
 
+  // ── Auth ────────────────────────────────────────────────────
   useEffect(() => {
     const loadUser = async () => {
-      try {
-        const userData = await base44.auth.me();
-        setUser(userData);
-      } catch (err) {
-        base44.auth.redirectToLogin();
+      const { data: { user }, error } = await supabase.auth.getUser();
+      if (error || !user) {
+        window.location.href = '/login';
+      } else {
+        setUser(user);
       }
     };
     loadUser();
   }, []);
 
+  // ── Ligação Familiar ────────────────────────────────────────
   const { data: ligacao } = useQuery({
     queryKey: ['ligacao', user?.email],
     queryFn: async () => {
-      const ligacoes = await base44.entities.LigacaoFamiliar.filter({
-        familiar_email: user.email,
-        status: 'aprovado'
-      });
-      return ligacoes[0];
+      const { data, error } = await supabase
+        .from('LigacaoFamiliar')
+        .select('*')
+        .eq('familiar_email', user.email)
+        .eq('status', 'aprovado')
+        .limit(1)
+        .single();
+      if (error) throw error;
+      return data;
     },
     enabled: !!user,
   });
 
+  // ── Residente ───────────────────────────────────────────────
   const { data: residenteData } = useQuery({
     queryKey: ['residente', ligacao?.residente_id],
     queryFn: async () => {
-      const residentes = await base44.entities.Residente.filter({ id: ligacao.residente_id });
-      return residentes[0];
+      const { data, error } = await supabase
+        .from('Residente')
+        .select('*')
+        .eq('id', ligacao.residente_id)
+        .single();
+      if (error) throw error;
+      return data;
     },
     enabled: !!ligacao,
   });
 
+  // ── Alertas ─────────────────────────────────────────────────
   const { data: alertas, isLoading } = useQuery({
     queryKey: ['alertas', residenteData?.id],
     queryFn: async () => {
-      return await base44.entities.Alerta.filter({
-        residente_id: residenteData.id,
-      }, '-created_date', 50);
+      const { data, error } = await supabase
+        .from('Alerta')
+        .select('*')
+        .eq('residente_id', residenteData.id)
+        .order('created_date', { ascending: false })
+        .limit(50);
+      if (error) throw error;
+      return data;
     },
     enabled: !!residenteData,
   });
 
+  // ── Mark as read ─────────────────────────────────────────────
   const marcarLidoMutation = useMutation({
-    mutationFn: (alertaId) => base44.entities.Alerta.update(alertaId, { lido: true }),
+    mutationFn: async (alertaId) => {
+      const { error } = await supabase
+        .from('Alerta')
+        .update({ lido: true })
+        .eq('id', alertaId);
+      if (error) throw error;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries(['alertas']);
     },
@@ -82,7 +117,7 @@ export default function Alertas() {
   }
 
   const alertasNaoLidos = alertas?.filter(a => !a.lido) || [];
-  const alertasLidos = alertas?.filter(a => a.lido) || [];
+  const alertasLidos    = alertas?.filter(a =>  a.lido) || [];
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 via-blue-50 to-purple-50 p-4 md:p-8">
