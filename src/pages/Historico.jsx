@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import { supabase } from '@/api/base44Client';
 import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Calendar, TrendingUp, TrendingDown } from 'lucide-react';
+import { Calendar } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -12,49 +12,69 @@ export default function Historico() {
   const [residente, setResidente] = useState(null);
   const [periodo, setPeriodo] = useState('semana');
 
+  // ── Auth ────────────────────────────────────────────────────
   useEffect(() => {
     const loadUser = async () => {
-      try {
-        const userData = await base44.auth.me();
-        setUser(userData);
-      } catch (err) {
-        base44.auth.redirectToLogin();
+      const { data: { user }, error } = await supabase.auth.getUser();
+      if (error || !user) {
+        window.location.href = '/login';
+      } else {
+        setUser(user);
       }
     };
     loadUser();
   }, []);
 
+  // ── Ligação Familiar ────────────────────────────────────────
   const { data: ligacao } = useQuery({
     queryKey: ['ligacao', user?.email],
     queryFn: async () => {
-      const ligacoes = await base44.entities.LigacaoFamiliar.filter({
-        familiar_email: user.email,
-        status: 'aprovado'
-      });
-      return ligacoes[0];
+      const { data, error } = await supabase
+        .from('LigacaoFamiliar')
+        .select('*')
+        .eq('familiar_email', user.email)
+        .eq('status', 'aprovado')
+        .limit(1)
+        .single();
+      if (error) throw error;
+      return data;
     },
     enabled: !!user,
   });
 
+  // ── Residente ───────────────────────────────────────────────
   const { data: residenteData } = useQuery({
     queryKey: ['residente', ligacao?.residente_id],
     queryFn: async () => {
-      const residentes = await base44.entities.Residente.filter({ id: ligacao.residente_id });
-      return residentes[0];
+      const { data, error } = await supabase
+        .from('Residente')
+        .select('*')
+        .eq('id', ligacao.residente_id)
+        .single();
+      if (error) throw error;
+      return data;
     },
     enabled: !!ligacao,
   });
 
+  // ── Histórico de Atividade ──────────────────────────────────
   const { data: historico, isLoading } = useQuery({
     queryKey: ['historico', residenteData?.id, periodo],
     queryFn: async () => {
       const dias = periodo === 'semana' ? 7 : 30;
       const dataInicio = new Date();
       dataInicio.setDate(dataInicio.getDate() - dias);
-      
-      return await base44.entities.RegistoAtividade.filter({
-        residente_id: residenteData.id,
-      }, '-data', 500);
+      const dataInicioStr = dataInicio.toISOString().split('T')[0];
+
+      const { data, error } = await supabase
+        .from('RegistoAtividade')
+        .select('*')
+        .eq('residente_id', residenteData.id)
+        .gte('data', dataInicioStr)
+        .order('data', { ascending: false })
+        .limit(500);
+      if (error) throw error;
+      return data;
     },
     enabled: !!residenteData,
   });
@@ -73,12 +93,10 @@ export default function Historico() {
 
   const agruparPorDia = () => {
     if (!historico) return [];
-    
+
     const porDia = {};
     historico.forEach(reg => {
-      if (!porDia[reg.data]) {
-        porDia[reg.data] = { total: 0, count: 0 };
-      }
+      if (!porDia[reg.data]) porDia[reg.data] = { total: 0, count: 0 };
       porDia[reg.data].total += reg.intensidade_movimento || 0;
       porDia[reg.data].count += 1;
     });
