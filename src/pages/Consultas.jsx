@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { base44 } from '@/api/base44Client';
+import { supabase } from '@/api/base44Client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,9 +8,75 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Calendar, FileAudio, Upload, Sparkles, Play, ChevronDown, ChevronUp } from 'lucide-react';
+import { Calendar, FileAudio, Upload, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
+
+// ─────────────────────────────────────────────────────────────
+// 🔑 API Keys — add these to your .env file:
+//    VITE_ANTHROPIC_API_KEY=...   (for AI analysis)
+//    VITE_OPENAI_API_KEY=...      (for audio transcription)
+// ─────────────────────────────────────────────────────────────
+const ANTHROPIC_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY;
+const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY;
+
+// ── Transcribe audio using OpenAI Whisper ───────────────────
+const transcribeAudio = async (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('model', 'whisper-1');
+  formData.append('language', 'pt');
+
+  const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` },
+    body: formData,
+  });
+
+  if (!response.ok) throw new Error('Erro na transcrição do áudio');
+  const data = await response.json();
+  return data.text;
+};
+
+// ── Analyse transcription using Anthropic Claude ────────────
+const analyseTranscription = async (transcricao) => {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1024,
+      messages: [{
+        role: 'user',
+        content: `
+Analisa esta transcrição de uma consulta médica e devolve um resumo estruturado em linguagem simples e acessível para familiares.
+
+Transcrição:
+${transcricao}
+
+Devolve APENAS um JSON válido com esta estrutura, sem mais nenhum texto:
+{
+  "resumo_ia": "Resumo simples e claro da consulta (2-3 parágrafos)",
+  "temas_principais": ["tema 1", "tema 2", "tema 3"],
+  "recomendacoes": ["recomendação 1", "recomendação 2"],
+  "proximos_passos": "Descrição dos próximos passos mencionados"
+}
+        `.trim()
+      }]
+    }),
+  });
+
+  if (!response.ok) throw new Error('Erro na análise da consulta');
+  const data = await response.json();
+  const text = data.content?.[0]?.text || '{}';
+  const clean = text.replace(/```json|```/g, '').trim();
+  return JSON.parse(clean);
+};
 
 export default function Consultas() {
   const [user, setUser] = useState(null);
@@ -19,7 +85,7 @@ export default function Consultas() {
   const [uploadingAudio, setUploadingAudio] = useState(false);
   const [processingAudio, setProcessingAudio] = useState(false);
   const [expandedConsulta, setExpandedConsulta] = useState(null);
-  
+
   const [formData, setFormData] = useState({
     data_consulta: new Date().toISOString().split('T')[0],
     tipo_consulta: 'rotina',
@@ -30,107 +96,112 @@ export default function Consultas() {
 
   const queryClient = useQueryClient();
 
-  // Fetch user
+  // ── Auth ────────────────────────────────────────────────────
   useQuery({
     queryKey: ['currentUser'],
     queryFn: async () => {
-      const userData = await base44.auth.me();
-      setUser(userData);
-      // Apenas admin/staff pode fazer upload de consultas
-      setIsStaff(userData.role === 'admin' || userData.role === 'staff');
-      return userData;
+      const { data: { user }, error } = await supabase.auth.getUser();
+      if (error || !user) { window.location.href = '/login'; return null; }
+      setUser(user);
+      const role = user.user_metadata?.role;
+      setIsStaff(role === 'admin' || role === 'staff');
+      return user;
     }
   });
 
-  // Fetch ligacao
+  // ── Ligação Familiar ────────────────────────────────────────
   const { data: ligacao } = useQuery({
     queryKey: ['ligacao', user?.email],
-    queryFn: () => base44.entities.LigacaoFamiliar.filter({ 
-      familiar_email: user.email,
-      status: 'aprovado'
-    }),
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('LigacaoFamiliar')
+        .select('*')
+        .eq('familiar_email', user.email)
+        .eq('status', 'aprovado')
+        .limit(1)
+        .single();
+      if (error) throw error;
+      return data;
+    },
     enabled: !!user?.email,
-    select: (data) => data[0]
   });
 
-  // Fetch residente
+  // ── Residente ───────────────────────────────────────────────
   const { data: residente } = useQuery({
     queryKey: ['residente', ligacao?.residente_id],
-    queryFn: () => base44.entities.Residente.filter({ id: ligacao.residente_id }),
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('Residente')
+        .select('*')
+        .eq('id', ligacao.residente_id)
+        .single();
+      if (error) throw error;
+      return data;
+    },
     enabled: !!ligacao?.residente_id,
-    select: (data) => data[0]
   });
 
-  // Fetch consultas
+  // ── Consultas ───────────────────────────────────────────────
   const { data: consultas = [], isLoading } = useQuery({
     queryKey: ['consultas', residente?.id],
-    queryFn: () => base44.entities.Consulta.filter(
-      { residente_id: residente.id },
-      '-data_consulta',
-      50
-    ),
-    enabled: !!residente?.id
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('Consulta')
+        .select('*')
+        .eq('residente_id', residente.id)
+        .order('data_consulta', { ascending: false })
+        .limit(50);
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!residente?.id,
   });
 
-  // Upload mutation
+  // ── Upload + Process Mutation ───────────────────────────────
   const uploadMutation = useMutation({
     mutationFn: async (data) => {
-      // 1. Upload audio
+      // 1. Upload audio to Supabase Storage
       setUploadingAudio(true);
-      const { file_url } = await base44.integrations.Core.UploadFile({ file: data.audio_file });
+      const fileName = `${Date.now()}-${data.audio_file.name}`;
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('consultas-audio')
+        .upload(fileName, data.audio_file);
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('consultas-audio')
+        .getPublicUrl(fileName);
       setUploadingAudio(false);
 
-      // 2. Transcrever e analisar
+      // 2. Transcribe audio with OpenAI Whisper
       setProcessingAudio(true);
-      const transcricao = await base44.integrations.Core.InvokeLLM({
-        prompt: 'Transcreve o seguinte áudio de uma consulta médica. Devolve apenas a transcrição, sem comentários.',
-        file_urls: [file_url]
-      });
+      const transcricao = await transcribeAudio(data.audio_file);
 
-      // 3. Gerar resumo e análise
-      const analise = await base44.integrations.Core.InvokeLLM({
-        prompt: `
-Analisa esta transcrição de uma consulta médica e devolve um resumo estruturado em linguagem simples e acessível para familiares.
-
-Transcrição:
-${transcricao}
-
-Devolve um JSON com esta estrutura:
-{
-  "resumo_ia": "Resumo simples e claro da consulta (2-3 parágrafos)",
-  "temas_principais": ["tema 1", "tema 2", "tema 3"],
-  "recomendacoes": ["recomendação 1", "recomendação 2"],
-  "proximos_passos": "Descrição dos próximos passos mencionados"
-}
-        `,
-        response_json_schema: {
-          type: "object",
-          properties: {
-            resumo_ia: { type: "string" },
-            temas_principais: { type: "array", items: { type: "string" } },
-            recomendacoes: { type: "array", items: { type: "string" } },
-            proximos_passos: { type: "string" }
-          }
-        }
-      });
-
+      // 3. Analyse transcription with Claude
+      const analise = await analyseTranscription(transcricao);
       setProcessingAudio(false);
 
-      // 4. Criar consulta
-      return await base44.entities.Consulta.create({
-        residente_id: residente.id,
-        data_consulta: data.data_consulta,
-        tipo_consulta: data.tipo_consulta,
-        especialidade: data.especialidade,
-        audio_url: file_url,
-        transcricao: transcricao,
-        resumo_ia: analise.resumo_ia,
-        temas_principais: analise.temas_principais,
-        recomendacoes: analise.recomendacoes,
-        proximos_passos: analise.proximos_passos,
-        carregado_por: user.email,
-        notas_adicionais: data.notas_adicionais
-      });
+      // 4. Save to Supabase
+      const { data: consulta, error: insertError } = await supabase
+        .from('Consulta')
+        .insert({
+          residente_id: residente.id,
+          data_consulta: data.data_consulta,
+          tipo_consulta: data.tipo_consulta,
+          especialidade: data.especialidade,
+          audio_url: publicUrl,
+          transcricao,
+          resumo_ia: analise.resumo_ia,
+          temas_principais: analise.temas_principais,
+          recomendacoes: analise.recomendacoes,
+          proximos_passos: analise.proximos_passos,
+          carregado_por: user.email,
+          notas_adicionais: data.notas_adicionais,
+        })
+        .select()
+        .single();
+      if (insertError) throw insertError;
+      return consulta;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['consultas'] });
@@ -144,7 +215,8 @@ Devolve um JSON com esta estrutura:
       });
       toast.success('Consulta carregada e analisada com sucesso!');
     },
-    onError: () => {
+    onError: (err) => {
+      console.error(err);
       toast.error('Erro ao processar consulta. Tente novamente.');
       setUploadingAudio(false);
       setProcessingAudio(false);
@@ -153,9 +225,7 @@ Devolve um JSON com esta estrutura:
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
-    if (file) {
-      setFormData(prev => ({ ...prev, audio_file: file }));
-    }
+    if (file) setFormData(prev => ({ ...prev, audio_file: file }));
   };
 
   const handleSubmit = (e) => {
@@ -191,7 +261,7 @@ Devolve um JSON com esta estrutura:
         )}
       </div>
 
-      {/* Upload Form - Apenas para Staff */}
+      {/* Upload Form */}
       {isStaff && showUploadForm && (
         <Card>
           <CardHeader>
@@ -239,11 +309,7 @@ Devolve um JSON com esta estrutura:
 
               <div>
                 <Label>Áudio da Consulta</Label>
-                <Input
-                  type="file"
-                  accept="audio/*"
-                  onChange={handleFileChange}
-                />
+                <Input type="file" accept="audio/*" onChange={handleFileChange} />
                 {formData.audio_file && (
                   <p className="text-sm text-green-600 mt-1">✓ {formData.audio_file.name}</p>
                 )}
@@ -263,11 +329,7 @@ Devolve um JSON com esta estrutura:
                 <Button type="button" variant="outline" onClick={() => setShowUploadForm(false)}>
                   Cancelar
                 </Button>
-                <Button 
-                  type="submit" 
-                  disabled={uploadMutation.isPending}
-                  className="min-w-32"
-                >
+                <Button type="submit" disabled={uploadMutation.isPending} className="min-w-32">
                   {uploadingAudio ? 'A carregar...' : processingAudio ? 'A analisar...' : 'Guardar'}
                 </Button>
               </div>
@@ -292,7 +354,10 @@ Devolve um JSON com esta estrutura:
         <div className="space-y-4">
           {consultas.map((consulta) => (
             <Card key={consulta.id} className="hover:shadow-lg transition-shadow">
-              <CardHeader className="cursor-pointer" onClick={() => setExpandedConsulta(expandedConsulta === consulta.id ? null : consulta.id)}>
+              <CardHeader
+                className="cursor-pointer"
+                onClick={() => setExpandedConsulta(expandedConsulta === consulta.id ? null : consulta.id)}
+              >
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
@@ -313,17 +378,15 @@ Devolve um JSON com esta estrutura:
                       </p>
                     )}
                   </div>
-                  {expandedConsulta === consulta.id ? (
-                    <ChevronUp className="w-5 h-5 text-gray-400" />
-                  ) : (
-                    <ChevronDown className="w-5 h-5 text-gray-400" />
-                  )}
+                  {expandedConsulta === consulta.id
+                    ? <ChevronUp className="w-5 h-5 text-gray-400" />
+                    : <ChevronDown className="w-5 h-5 text-gray-400" />
+                  }
                 </div>
               </CardHeader>
 
               {expandedConsulta === consulta.id && (
                 <CardContent className="space-y-4">
-                  {/* Resumo IA */}
                   {consulta.resumo_ia && (
                     <div className="bg-blue-50 rounded-lg p-4">
                       <div className="flex items-center gap-2 mb-2">
@@ -336,7 +399,6 @@ Devolve um JSON com esta estrutura:
                     </div>
                   )}
 
-                  {/* Temas Principais */}
                   {consulta.temas_principais?.length > 0 && (
                     <div>
                       <h4 className="font-medium text-gray-900 mb-2">Temas Abordados</h4>
@@ -350,7 +412,6 @@ Devolve um JSON com esta estrutura:
                     </div>
                   )}
 
-                  {/* Recomendações */}
                   {consulta.recomendacoes?.length > 0 && (
                     <div>
                       <h4 className="font-medium text-gray-900 mb-2">Recomendações</h4>
@@ -365,7 +426,6 @@ Devolve um JSON com esta estrutura:
                     </div>
                   )}
 
-                  {/* Próximos Passos */}
                   {consulta.proximos_passos && (
                     <div>
                       <h4 className="font-medium text-gray-900 mb-2">Próximos Passos</h4>
@@ -373,7 +433,6 @@ Devolve um JSON com esta estrutura:
                     </div>
                   )}
 
-                  {/* Áudio */}
                   {consulta.audio_url && (
                     <div className="pt-4 border-t">
                       <audio controls className="w-full">
@@ -382,7 +441,6 @@ Devolve um JSON com esta estrutura:
                     </div>
                   )}
 
-                  {/* Notas */}
                   {consulta.notas_adicionais && (
                     <div className="text-xs text-gray-500 pt-2 border-t">
                       <strong>Notas:</strong> {consulta.notas_adicionais}
