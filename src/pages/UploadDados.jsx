@@ -1,16 +1,24 @@
 import React, { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { base44 } from '@/api/base44Client';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/api/base44Client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Upload, FileText, Check, AlertCircle, Loader2 } from 'lucide-react';
+import { Upload, Check, AlertCircle, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import Papa from 'papaparse';
+
+// ─────────────────────────────────────────────────────────────
+// 🔑 API Keys from .env:
+//    VITE_ANTHROPIC_API_KEY=...
+//    VITE_OPENAI_API_KEY=...
+// ─────────────────────────────────────────────────────────────
+const ANTHROPIC_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY;
+const OPENAI_API_KEY    = import.meta.env.VITE_OPENAI_API_KEY;
 
 const tiposUpload = [
   {
     id: 'movimento',
     label: 'Dados de Movimento',
-    entity: 'RegistoAtividade',
     icon: '📊',
     descricao: 'CSV com: residente_id, data, hora, intensidade_movimento, picos_movimento, minutos_inatividade',
     exemplo: 'residente_id,data,hora,intensidade_movimento,picos_movimento,minutos_inatividade\n6991bad31c3dd5aecee47312,2026-02-17,10,75,12,5'
@@ -18,7 +26,6 @@ const tiposUpload = [
   {
     id: 'alimentacao',
     label: 'Dados de Alimentação',
-    entity: 'RegistoAlimentacao',
     icon: '🍽️',
     descricao: 'CSV com: residente_id, data, refeicao, nivel_ingestao',
     exemplo: 'residente_id,data,refeicao,nivel_ingestao\n6991bad31c3dd5aecee47312,2026-02-17,almoco,normal'
@@ -26,12 +33,78 @@ const tiposUpload = [
   {
     id: 'consultas',
     label: 'Áudio de Consultas',
-    entity: 'Consulta',
     icon: '🩺',
     descricao: 'Ficheiro de áudio (mp3, wav, m4a) de consulta médica',
     exemplo: null
   }
 ];
+
+// ── Parse CSV in browser ────────────────────────────────────
+const parseCSV = (file) => new Promise((resolve, reject) => {
+  Papa.parse(file, {
+    header: true,
+    skipEmptyLines: true,
+    dynamicTyping: true,
+    complete: (results) => resolve(results.data),
+    error: (err) => reject(err),
+  });
+});
+
+// ── Transcribe audio with OpenAI Whisper ────────────────────
+const transcribeAudio = async (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('model', 'whisper-1');
+  formData.append('language', 'pt');
+
+  const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` },
+    body: formData,
+  });
+  if (!response.ok) throw new Error('Erro na transcrição do áudio');
+  const data = await response.json();
+  return data.text;
+};
+
+// ── Analyse transcription with Claude ───────────────────────
+const analyseTranscription = async (transcricao) => {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1024,
+      messages: [{
+        role: 'user',
+        content: `Analisa esta transcrição de consulta médica e extrai:
+- Resumo claro para familiares
+- Temas principais discutidos
+- Recomendações médicas
+- Próximos passos
+
+Transcrição: ${transcricao}
+
+Devolve APENAS um JSON válido com esta estrutura, sem mais nenhum texto:
+{
+  "resumo_ia": "...",
+  "temas_principais": ["...", "..."],
+  "recomendacoes": ["...", "..."],
+  "proximos_passos": "..."
+}`
+      }]
+    }),
+  });
+  if (!response.ok) throw new Error('Erro na análise da consulta');
+  const data = await response.json();
+  const text = data.content?.[0]?.text || '{}';
+  return JSON.parse(text.replace(/```json|```/g, '').trim());
+};
 
 export default function UploadDados() {
   const [user, setUser] = useState(null);
@@ -42,24 +115,30 @@ export default function UploadDados() {
   const [resultado, setResultado] = useState(null);
   const queryClient = useQueryClient();
 
+  // ── Auth ──────────────────────────────────────────────────
   useQuery({
     queryKey: ['currentUser'],
     queryFn: async () => {
-      const userData = await base44.auth.me();
-      setUser(userData);
-      return userData;
+      const { data: { user }, error } = await supabase.auth.getUser();
+      if (error || !user) { window.location.href = '/login'; return null; }
+      setUser(user);
+      return user;
     }
   });
 
+  // ── Residentes ────────────────────────────────────────────
   const { data: residentes = [] } = useQuery({
     queryKey: ['residentes-all'],
-    queryFn: () => base44.entities.Residente.list(),
-    enabled: !!user
+    queryFn: async () => {
+      const { data, error } = await supabase.from('Residente').select('*');
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!user,
   });
 
   const handleFileChange = (e) => {
-    const file = e.target.files[0];
-    setFicheiro(file);
+    setFicheiro(e.target.files[0]);
     setResultado(null);
   };
 
@@ -73,109 +152,60 @@ export default function UploadDados() {
     setResultado(null);
 
     try {
-      // 1. Upload do ficheiro
-      const { file_url } = await base44.integrations.Core.UploadFile({ file: ficheiro });
-
       if (tipoSelecionado.id === 'consultas') {
-        // Processar áudio de consulta
+        // ── 1. Upload audio to Supabase Storage ──────────────
+        const fileName = `${Date.now()}-${ficheiro.name}`;
+        const { error: uploadError } = await supabase.storage
+          .from('consultas-audio')
+          .upload(fileName, ficheiro);
+        if (uploadError) throw uploadError;
+
+        const { data: { publicUrl } } = supabase.storage
+          .from('consultas-audio')
+          .getPublicUrl(fileName);
+
+        // ── 2. Transcribe ─────────────────────────────────────
         toast.info('A transcrever áudio... Isto pode demorar alguns segundos.');
-        
-        const transcricao = await base44.integrations.Core.InvokeLLM({
-          prompt: 'Transcreve este áudio de consulta médica em português de forma detalhada e estruturada.',
-          file_urls: [file_url]
-        });
+        const transcricao = await transcribeAudio(ficheiro);
 
-        const analise = await base44.integrations.Core.InvokeLLM({
-          prompt: `Analisa esta transcrição de consulta médica e extrai:
-          - Resumo claro para familiares
-          - Temas principais discutidos
-          - Recomendações médicas
-          - Próximos passos
-          
-          Transcrição: ${transcricao}`,
-          response_json_schema: {
-            type: 'object',
-            properties: {
-              resumo_ia: { type: 'string' },
-              temas_principais: { type: 'array', items: { type: 'string' } },
-              recomendacoes: { type: 'array', items: { type: 'string' } },
-              proximos_passos: { type: 'string' }
-            }
-          }
-        });
+        // ── 3. Analyse ────────────────────────────────────────
+        const analise = await analyseTranscription(transcricao);
 
-        await base44.entities.Consulta.create({
+        // ── 4. Save to Supabase ───────────────────────────────
+        const { error: insertError } = await supabase.from('Consulta').insert({
           residente_id: residenteId,
           data_consulta: new Date().toISOString().split('T')[0],
           tipo_consulta: 'rotina',
-          audio_url: file_url,
+          audio_url: publicUrl,
           transcricao,
           ...analise,
-          carregado_por: user.email
+          carregado_por: user.email,
         });
+        if (insertError) throw insertError;
 
-        setResultado({
-          sucesso: true,
-          mensagem: 'Consulta processada com sucesso',
-          detalhes: { registos: 1 }
-        });
+        setResultado({ sucesso: true, mensagem: 'Consulta processada com sucesso', detalhes: { registos: 1 } });
 
       } else {
-        // Processar CSV (movimento ou alimentação)
-        const schema = tipoSelecionado.id === 'movimento' ? {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              residente_id: { type: 'string' },
-              data: { type: 'string' },
-              hora: { type: 'number' },
-              intensidade_movimento: { type: 'number' },
-              picos_movimento: { type: 'number' },
-              minutos_inatividade: { type: 'number' }
-            }
-          }
-        } : {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              residente_id: { type: 'string' },
-              data: { type: 'string' },
-              refeicao: { type: 'string' },
-              nivel_ingestao: { type: 'string' }
-            }
-          }
-        };
+        // ── Parse CSV in browser ──────────────────────────────
+        const rows = await parseCSV(ficheiro);
 
-        const extraido = await base44.integrations.Core.ExtractDataFromUploadedFile({
-          file_url,
-          json_schema: schema
-        });
-
-        if (extraido.status === 'error') {
-          throw new Error(extraido.details || 'Erro ao processar ficheiro');
-        }
-
-        // Filtrar apenas registos do residente selecionado
-        const registosFiltrados = extraido.output.filter(r => r.residente_id === residenteId);
+        // Filter to selected residente
+        const registosFiltrados = rows.filter(r => String(r.residente_id) === String(residenteId));
 
         if (registosFiltrados.length === 0) {
-          toast.error('Nenhum registo encontrado para este residente');
+          toast.error('Nenhum registo encontrado para este residente no CSV');
           setProcessando(false);
           return;
         }
 
-        // Inserir em bulk
-        if (tipoSelecionado.id === 'movimento') {
-          await base44.entities.RegistoAtividade.bulkCreate(registosFiltrados);
-        } else {
-          const registosComEmail = registosFiltrados.map(r => ({
-            ...r,
-            registado_por: user.email
-          }));
-          await base44.entities.RegistoAlimentacao.bulkCreate(registosComEmail);
-        }
+        // ── Bulk insert ───────────────────────────────────────
+        const tabela = tipoSelecionado.id === 'movimento' ? 'RegistoAtividade' : 'RegistoAlimentacao';
+        const registosParaInserir = tipoSelecionado.id === 'alimentacao'
+          ? registosFiltrados.map(r => ({ ...r, registado_por: user.email }))
+          : registosFiltrados;
+
+        const { error: insertError } = await supabase.from(tabela).insert(registosParaInserir);
+        if (insertError) throw insertError;
 
         setResultado({
           sucesso: true,
@@ -188,14 +218,10 @@ export default function UploadDados() {
 
       toast.success('Upload concluído!');
       setFicheiro(null);
-      
+
     } catch (error) {
       console.error(error);
-      setResultado({
-        sucesso: false,
-        mensagem: 'Erro ao processar ficheiro',
-        detalhes: { erro: error.message }
-      });
+      setResultado({ sucesso: false, mensagem: 'Erro ao processar ficheiro', detalhes: { erro: error.message } });
       toast.error('Erro ao processar ficheiro');
     } finally {
       setProcessando(false);
@@ -238,9 +264,7 @@ export default function UploadDados() {
           <CardContent className="space-y-4">
             {/* Seleção de Residente */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Residente
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Residente</label>
               <select
                 value={residenteId}
                 onChange={(e) => setResidenteId(e.target.value)}
@@ -248,23 +272,19 @@ export default function UploadDados() {
               >
                 <option value="">Selecione um residente</option>
                 {residentes.map(r => (
-                  <option key={r.id} value={r.id}>
-                    {r.nome} - Quarto {r.quarto}
-                  </option>
+                  <option key={r.id} value={r.id}>{r.nome} - Quarto {r.quarto}</option>
                 ))}
               </select>
             </div>
 
             {/* Upload de Ficheiro */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Ficheiro
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Ficheiro</label>
               <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
                 <input
                   type="file"
                   onChange={handleFileChange}
-                  accept={tipoSelecionado.id === 'consultas' ? 'audio/*' : '.csv,.json'}
+                  accept={tipoSelecionado.id === 'consultas' ? 'audio/*' : '.csv'}
                   className="hidden"
                   id="file-upload"
                 />
@@ -278,19 +298,17 @@ export default function UploadDados() {
                     )}
                   </div>
                   <div className="text-xs text-gray-500 mt-2">
-                    {tipoSelecionado.id === 'consultas' ? 'MP3, WAV, M4A' : 'CSV ou JSON'}
+                    {tipoSelecionado.id === 'consultas' ? 'MP3, WAV, M4A' : 'CSV'}
                   </div>
                 </label>
               </div>
             </div>
 
-            {/* Exemplo */}
+            {/* Exemplo CSV */}
             {tipoSelecionado.exemplo && (
               <div className="bg-gray-50 rounded-lg p-4">
                 <div className="text-xs font-medium text-gray-700 mb-2">Exemplo de CSV:</div>
-                <pre className="text-xs text-gray-600 overflow-x-auto">
-                  {tipoSelecionado.exemplo}
-                </pre>
+                <pre className="text-xs text-gray-600 overflow-x-auto">{tipoSelecionado.exemplo}</pre>
               </div>
             )}
 
@@ -302,15 +320,9 @@ export default function UploadDados() {
               size="lg"
             >
               {processando ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  A processar...
-                </>
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />A processar...</>
               ) : (
-                <>
-                  <Upload className="w-4 h-4 mr-2" />
-                  Importar Dados
-                </>
+                <><Upload className="w-4 h-4 mr-2" />Importar Dados</>
               )}
             </Button>
 
@@ -320,11 +332,10 @@ export default function UploadDados() {
                 resultado.sucesso ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'
               }`}>
                 <div className="flex items-start gap-3">
-                  {resultado.sucesso ? (
-                    <Check className="w-5 h-5 text-green-600 mt-0.5" />
-                  ) : (
-                    <AlertCircle className="w-5 h-5 text-red-600 mt-0.5" />
-                  )}
+                  {resultado.sucesso
+                    ? <Check className="w-5 h-5 text-green-600 mt-0.5" />
+                    : <AlertCircle className="w-5 h-5 text-red-600 mt-0.5" />
+                  }
                   <div className="flex-1">
                     <div className={`font-medium ${resultado.sucesso ? 'text-green-900' : 'text-red-900'}`}>
                       {resultado.mensagem}
