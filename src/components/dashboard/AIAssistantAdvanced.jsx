@@ -3,7 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { X, Send, Sparkles, TrendingUp, Calendar } from 'lucide-react';
-import { base44 } from '@/api/base44Client';
+
+const ANTHROPIC_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY;
 
 const SYSTEM_PROMPT = `
 És um assistente inteligente integrado numa aplicação privada de acompanhamento de um único residente num lar.
@@ -107,11 +108,9 @@ export default function AIAssistantAdvanced({
     setLoading(true);
 
     try {
-      // Preparar contexto completo
       const mediaMovimento = atividadeHoje?.reduce((sum, a) => sum + (a.intensidade_movimento || 0), 0) / (atividadeHoje?.length || 1);
       const mediaMovimentoSemana = atividadeSemana?.reduce((sum, a) => sum + (a.intensidade_movimento || 0), 0) / (atividadeSemana?.length || 1);
       
-      // Análise de alimentação
       const calcularApetite = (registos) => {
         if (!registos || registos.length === 0) return 'N/A';
         const valor = registos.reduce((sum, r) => {
@@ -126,8 +125,6 @@ export default function AIAssistantAdvanced({
       const apetiteSemana = calcularApetite(alimentacaoSemana);
       
       const contexto = `
-${SYSTEM_PROMPT}
-
 📊 DADOS DO/A ${residente.nome}:
 
 **Hoje (${new Date().toLocaleDateString('pt-PT')})**:
@@ -159,13 +156,42 @@ ${consulta.recomendacoes?.length ? `- Recomendações: ${consulta.recomendacoes.
 ${mensagens.slice(-4).map(m => `${m.role === 'user' ? 'Familiar' : 'Assistente'}: ${m.content}`).join('\n')}
       `.trim();
 
-      const resposta = await base44.integrations.Core.InvokeLLM({
-        prompt: `${contexto}\n\n**Pergunta atual**: ${pergunta}\n\nResponde seguindo SEMPRE a estrutura definida acima.`,
+      // Build conversation history for multi-turn support
+      const historicoMensagens = mensagens.slice(-8).map(m => ({
+        role: m.role,
+        content: m.content,
+      }));
+
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1024,
+          system: SYSTEM_PROMPT + '\n\n' + contexto,
+          messages: [
+            ...historicoMensagens,
+            { role: 'user', content: pergunta }
+          ],
+        }),
       });
+
+      if (!response.ok) {
+        throw new Error(`Anthropic API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const resposta = data.content?.[0]?.text || 'Não foi possível obter uma resposta.';
 
       const novaResposta = { role: 'assistant', content: resposta };
       setMensagens(prev => [...prev, novaResposta]);
     } catch (error) {
+      console.error('Erro ao chamar Claude:', error);
       const erroMsg = { 
         role: 'assistant', 
         content: '❌ Desculpe, não consegui processar a sua pergunta neste momento. Por favor, tente novamente.' 
