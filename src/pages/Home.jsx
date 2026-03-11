@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import { supabase } from '@/api/base44Client';
 import { useQuery } from '@tanstack/react-query';
-import { Activity, Heart, Bell, MessageCircle } from 'lucide-react';
+import { Bell, MessageCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import ActivitySummary from '../components/dashboard/ActivitySummary';
 import StabilityIndex from '../components/dashboard/StabilityIndex';
@@ -16,118 +16,156 @@ export default function Home() {
   const [residente, setResidente] = useState(null);
   const [showChat, setShowChat] = useState(false);
 
+  // ── Auth ────────────────────────────────────────────────────
   useEffect(() => {
     const loadUser = async () => {
-      try {
-        const userData = await base44.auth.me();
-        setUser(userData);
-      } catch (err) {
-        base44.auth.redirectToLogin();
+      const { data: { user }, error } = await supabase.auth.getUser();
+      if (error || !user) {
+        window.location.href = '/login';
+      } else {
+        setUser(user);
       }
     };
     loadUser();
   }, []);
 
+  // ── Ligação Familiar ────────────────────────────────────────
   const { data: ligacao, isLoading: loadingLigacao } = useQuery({
     queryKey: ['ligacao', user?.email],
     queryFn: async () => {
-      const ligacoes = await base44.entities.LigacaoFamiliar.filter({
-        familiar_email: user.email,
-        status: 'aprovado'
-      });
-      return ligacoes[0];
+      const { data, error } = await supabase
+        .from('LigacaoFamiliar')
+        .select('*')
+        .eq('familiar_email', user.email)
+        .eq('status', 'aprovado')
+        .limit(1)
+        .single();
+      if (error) throw error;
+      return data;
     },
     enabled: !!user,
   });
 
+  // ── Residente ───────────────────────────────────────────────
   const { data: residenteData, isLoading: loadingResidente } = useQuery({
     queryKey: ['residente', ligacao?.residente_id],
     queryFn: async () => {
-      const residentes = await base44.entities.Residente.filter({ id: ligacao.residente_id });
-      return residentes[0];
+      const { data, error } = await supabase
+        .from('Residente')
+        .select('*')
+        .eq('id', ligacao.residente_id)
+        .single();
+      if (error) throw error;
+      return data;
     },
     enabled: !!ligacao,
   });
 
+  const hoje = new Date().toISOString().split('T')[0];
+  const dataUltimaSemana = new Date();
+  dataUltimaSemana.setDate(dataUltimaSemana.getDate() - 7);
+  const semanaStr = dataUltimaSemana.toISOString().split('T')[0];
+
+  // ── Atividade de hoje ───────────────────────────────────────
   const { data: atividadeHoje, isLoading: loadingAtividade } = useQuery({
     queryKey: ['atividade-hoje', residenteData?.id],
     queryFn: async () => {
-      const hoje = new Date().toISOString().split('T')[0];
-      return await base44.entities.RegistoAtividade.filter({
-        residente_id: residenteData.id,
-        data: hoje
-      }, '-hora');
+      const { data, error } = await supabase
+        .from('RegistoAtividade')
+        .select('*')
+        .eq('residente_id', residenteData.id)
+        .eq('data', hoje)
+        .order('hora', { ascending: false });
+      if (error) throw error;
+      return data;
     },
     enabled: !!residenteData,
   });
 
+  // ── Alertas não lidos ───────────────────────────────────────
   const { data: alertasNaoLidos } = useQuery({
     queryKey: ['alertas-nao-lidos', residenteData?.id],
     queryFn: async () => {
-      return await base44.entities.Alerta.filter({
-        residente_id: residenteData.id,
-        lido: false
-      }, '-created_date', 5);
+      const { data, error } = await supabase
+        .from('Alerta')
+        .select('*')
+        .eq('residente_id', residenteData.id)
+        .eq('lido', false)
+        .order('created_date', { ascending: false })
+        .limit(5);
+      if (error) throw error;
+      return data;
     },
     enabled: !!residenteData,
   });
 
+  // ── Última consulta ─────────────────────────────────────────
   const { data: ultimaConsulta } = useQuery({
     queryKey: ['ultima-consulta', residenteData?.id],
     queryFn: async () => {
-      const consultas = await base44.entities.Consulta.filter({
-        residente_id: residenteData.id
-      }, '-data_consulta', 1);
-      return consultas[0];
+      const { data, error } = await supabase
+        .from('Consulta')
+        .select('*')
+        .eq('residente_id', residenteData.id)
+        .order('data_consulta', { ascending: false })
+        .limit(1)
+        .single();
+      if (error) throw error;
+      return data;
     },
     enabled: !!residenteData,
   });
 
-  const dataUltimaSemana = new Date();
-  dataUltimaSemana.setDate(dataUltimaSemana.getDate() - 7);
-  
+  // ── Atividade da semana ─────────────────────────────────────
   const { data: atividadeSemana = [] } = useQuery({
     queryKey: ['atividade-semana', residenteData?.id],
     queryFn: async () => {
-      return await base44.entities.RegistoAtividade.filter({
-        residente_id: residenteData.id,
-        data: { $gte: dataUltimaSemana.toISOString().split('T')[0] }
-      });
+      const { data, error } = await supabase
+        .from('RegistoAtividade')
+        .select('*')
+        .eq('residente_id', residenteData.id)
+        .gte('data', semanaStr);
+      if (error) throw error;
+      return data;
     },
     enabled: !!residenteData,
   });
 
-  // Fetch registos de alimentação
-  const hoje = new Date().toISOString().split('T')[0];
-  
+  // ── Alimentação de hoje ─────────────────────────────────────
   const { data: alimentacaoHoje = [], isLoading: loadingAlimentacao } = useQuery({
     queryKey: ['alimentacao-hoje', residenteData?.id],
     queryFn: async () => {
-      return await base44.entities.RegistoAlimentacao.filter({
-        residente_id: residenteData.id,
-        data: hoje
-      });
+      const { data, error } = await supabase
+        .from('RegistoAlimentacao')
+        .select('*')
+        .eq('residente_id', residenteData.id)
+        .eq('data', hoje);
+      if (error) throw error;
+      return data;
     },
     enabled: !!residenteData,
   });
 
+  // ── Alimentação da semana ───────────────────────────────────
   const { data: alimentacaoSemana = [] } = useQuery({
     queryKey: ['alimentacao-semana', residenteData?.id],
     queryFn: async () => {
-      return await base44.entities.RegistoAlimentacao.filter({
-        residente_id: residenteData.id,
-        data: { $gte: dataUltimaSemana.toISOString().split('T')[0] }
-      });
+      const { data, error } = await supabase
+        .from('RegistoAlimentacao')
+        .select('*')
+        .eq('residente_id', residenteData.id)
+        .gte('data', semanaStr);
+      if (error) throw error;
+      return data;
     },
     enabled: !!residenteData,
   });
 
   useEffect(() => {
-    if (residenteData) {
-      setResidente(residenteData);
-    }
+    if (residenteData) setResidente(residenteData);
   }, [residenteData]);
 
+  // ── Loading state ───────────────────────────────────────────
   if (loadingLigacao || loadingResidente) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-green-50 via-blue-50 to-purple-50 p-4 md:p-8">
@@ -161,11 +199,10 @@ export default function Home() {
 
   if (!residente) return null;
 
+  // ── Cálculos de atividade ───────────────────────────────────
   const calcularClassificacaoDia = () => {
     if (!atividadeHoje || atividadeHoje.length === 0) return 'sem_dados';
-    
     const intensidadeMedia = atividadeHoje.reduce((sum, r) => sum + (r.intensidade_movimento || 0), 0) / atividadeHoje.length;
-    
     if (intensidadeMedia > 70) return 'muito_ativo';
     if (intensidadeMedia > 50) return 'moderadamente_ativo';
     if (intensidadeMedia > 25) return 'calmo';
@@ -174,16 +211,14 @@ export default function Home() {
 
   const calcularIndiceEstabilidade = () => {
     if (!atividadeHoje || atividadeHoje.length === 0) return null;
-    
     const intensidadeMedia = atividadeHoje.reduce((sum, r) => sum + (r.intensidade_movimento || 0), 0) / atividadeHoje.length;
     const baseline = residente.baseline_atividade || 50;
     const diferenca = Math.abs(intensidadeMedia - baseline);
     const percentualDiferenca = (diferenca / baseline) * 100;
-    
-    if (percentualDiferenca < 10) return { valor: 95, cor: 'verde', texto: 'Rotina estável' };
+    if (percentualDiferenca < 10) return { valor: 95, cor: 'verde',   texto: 'Rotina estável' };
     if (percentualDiferenca < 20) return { valor: 75, cor: 'amarelo', texto: 'Pequenas variações' };
     if (percentualDiferenca < 35) return { valor: 55, cor: 'laranja', texto: 'Alterações moderadas' };
-    return { valor: 30, cor: 'vermelho', texto: 'Alterações significativas' };
+    return                               { valor: 30, cor: 'vermelho', texto: 'Alterações significativas' };
   };
 
   const classificacao = calcularClassificacaoDia();
@@ -274,37 +309,28 @@ export default function Home() {
 
         {/* Grid Principal */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Coluna Esquerda - Resumos */}
           <div className="lg:col-span-1 space-y-6">
-            <ActivitySummary 
+            <ActivitySummary
               classificacao={classificacao}
               atividadeHoje={atividadeHoje}
               isLoading={loadingAtividade}
             />
-            
-            <AppetiteSummary 
+            <AppetiteSummary
               registosHoje={alimentacaoHoje}
               registosSemana={alimentacaoSemana}
               isLoading={loadingAlimentacao}
             />
-            
-            {estabilidade && (
-              <StabilityIndex estabilidade={estabilidade} />
-            )}
+            {estabilidade && <StabilityIndex estabilidade={estabilidade} />}
           </div>
 
-          {/* Coluna Direita - Gráfico */}
           <div className="lg:col-span-2">
-            <ActivityChart 
-              dados={atividadeHoje}
-              isLoading={loadingAtividade}
-            />
+            <ActivityChart dados={atividadeHoje} isLoading={loadingAtividade} />
           </div>
         </div>
 
         {/* Assistente IA */}
         {showChat && (
-          <AIAssistantAdvanced 
+          <AIAssistantAdvanced
             residente={residente}
             atividadeHoje={atividadeHoje}
             atividadeSemana={atividadeSemana}
