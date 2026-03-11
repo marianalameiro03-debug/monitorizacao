@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { base44 } from '@/api/base44Client';
+import { supabase } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -13,54 +13,78 @@ export default function Definicoes() {
   const [parentesco, setParentesco] = useState('');
   const queryClient = useQueryClient();
 
+  // ── Auth ────────────────────────────────────────────────────
   useEffect(() => {
     const loadUser = async () => {
-      try {
-        const userData = await base44.auth.me();
-        setUser(userData);
-      } catch (err) {
-        base44.auth.redirectToLogin();
+      const { data: { user }, error } = await supabase.auth.getUser();
+      if (error || !user) {
+        window.location.href = '/login';
+      } else {
+        setUser(user);
       }
     };
     loadUser();
   }, []);
 
+  // ── Ligação Familiar ────────────────────────────────────────
   const { data: ligacao } = useQuery({
     queryKey: ['ligacao', user?.email],
     queryFn: async () => {
-      const ligacoes = await base44.entities.LigacaoFamiliar.filter({
-        familiar_email: user.email,
-        status: 'aprovado'
-      });
-      return ligacoes[0];
+      const { data, error } = await supabase
+        .from('LigacaoFamiliar')
+        .select('*')
+        .eq('familiar_email', user.email)
+        .eq('status', 'aprovado')
+        .limit(1)
+        .single();
+      if (error) throw error;
+      return data;
     },
     enabled: !!user,
   });
 
+  // ── Residente ───────────────────────────────────────────────
   const { data: residente } = useQuery({
     queryKey: ['residente', ligacao?.residente_id],
     queryFn: async () => {
-      const residentes = await base44.entities.Residente.filter({ id: ligacao.residente_id });
-      return residentes[0];
+      const { data, error } = await supabase
+        .from('Residente')
+        .select('*')
+        .eq('id', ligacao.residente_id)
+        .single();
+      if (error) throw error;
+      return data;
     },
     enabled: !!ligacao,
   });
 
+  // ── Criar Ligação ───────────────────────────────────────────
   const criarLigacaoMutation = useMutation({
     mutationFn: async () => {
-      // Procurar residente pelo código
-      const residentes = await base44.entities.Residente.filter({ codigo: codigoResidente });
-      if (residentes.length === 0) {
+      // Find residente by code
+      const { data: residentes, error: findError } = await supabase
+        .from('Residente')
+        .select('*')
+        .eq('codigo', codigoResidente)
+        .limit(1);
+      if (findError) throw findError;
+      if (!residentes || residentes.length === 0) {
         throw new Error('Código de residente não encontrado');
       }
-      
-      return await base44.entities.LigacaoFamiliar.create({
-        residente_id: residentes[0].id,
-        familiar_email: user.email,
-        parentesco: parentesco,
-        status: 'aprovado',
-        data_pedido: new Date().toISOString().split('T')[0]
-      });
+
+      const { data, error } = await supabase
+        .from('LigacaoFamiliar')
+        .insert({
+          residente_id: residentes[0].id,
+          familiar_email: user.email,
+          parentesco,
+          status: 'aprovado',
+          data_pedido: new Date().toISOString().split('T')[0],
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      return data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries(['ligacao']);
@@ -69,8 +93,10 @@ export default function Definicoes() {
     },
   });
 
-  const handleLogout = () => {
-    base44.auth.logout();
+  // ── Logout ──────────────────────────────────────────────────
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    window.location.href = '/login';
   };
 
   return (
@@ -96,7 +122,7 @@ export default function Definicoes() {
           <CardContent className="space-y-3">
             <div>
               <Label className="text-sm text-gray-600">Nome</Label>
-              <p className="font-medium">{user?.full_name || '—'}</p>
+              <p className="font-medium">{user?.user_metadata?.full_name || '—'}</p>
             </div>
             <div>
               <Label className="text-sm text-gray-600">Email</Label>
@@ -166,12 +192,12 @@ export default function Definicoes() {
                     required
                   />
                 </div>
-                <Button 
-                  type="submit" 
+                <Button
+                  type="submit"
                   className="w-full"
-                  disabled={criarLigacaoMutation.isLoading}
+                  disabled={criarLigacaoMutation.isPending}
                 >
-                  {criarLigacaoMutation.isLoading ? 'A associar...' : 'Associar residente'}
+                  {criarLigacaoMutation.isPending ? 'A associar...' : 'Associar residente'}
                 </Button>
                 {criarLigacaoMutation.isError && (
                   <p className="text-sm text-red-600 mt-2">
