@@ -3,7 +3,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { X, Send, Sparkles } from 'lucide-react';
-import { base44 } from '@/api/base44Client';
+
+// ─────────────────────────────────────────────────────────────
+// 🔑 Add your Anthropic API key here, or better yet, store it
+//    in a .env file as VITE_ANTHROPIC_API_KEY and reference it
+//    as import.meta.env.VITE_ANTHROPIC_API_KEY
+// ─────────────────────────────────────────────────────────────
+const ANTHROPIC_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY;
 
 const sugestoesPadrao = [
   "Como foi o dia hoje?",
@@ -23,7 +29,6 @@ export default function AIAssistant({ residente, atividadeHoje, estabilidade, cl
     setLoading(true);
 
     try {
-      // Preparar contexto
       const contexto = `
 Estás a analisar dados de movimento do/a ${residente.nome}.
 
@@ -62,16 +67,40 @@ REGRAS CRÍTICAS:
 - Se dados insuficientes, declarar claramente
       `.trim();
 
-      const resposta = await base44.integrations.Core.InvokeLLM({
-        prompt: `${contexto}\n\nPergunta do familiar: ${pergunta}`,
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+          // NOTE: Direct API calls from the browser expose your API key to users.
+          // For production, proxy this request through your own backend server.
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1024,
+          system: contexto,
+          messages: [
+            { role: 'user', content: pergunta }
+          ],
+        }),
       });
+
+      if (!response.ok) {
+        throw new Error(`Anthropic API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const resposta = data.content?.[0]?.text || 'Não foi possível obter uma resposta.';
 
       const novaResposta = { role: 'assistant', content: resposta };
       setMensagens(prev => [...prev, novaResposta]);
     } catch (error) {
-      const erroMsg = { 
-        role: 'assistant', 
-        content: 'Desculpe, não consegui processar a sua pergunta neste momento. Por favor, tente novamente.' 
+      console.error('Erro ao chamar Claude:', error);
+      const erroMsg = {
+        role: 'assistant',
+        content: 'Desculpe, não consegui processar a sua pergunta neste momento. Por favor, tente novamente.',
       };
       setMensagens(prev => [...prev, erroMsg]);
     } finally {
@@ -90,7 +119,7 @@ REGRAS CRÍTICAS:
           <X className="w-5 h-5" />
         </Button>
       </CardHeader>
-      
+
       <CardContent className="flex-1 overflow-y-auto p-4 space-y-4">
         {mensagens.length === 0 ? (
           <div className="text-center py-8">
@@ -131,7 +160,7 @@ REGRAS CRÍTICAS:
             </div>
           ))
         )}
-        
+
         {loading && (
           <div className="flex justify-start">
             <div className="bg-gray-100 rounded-2xl px-4 py-3">
