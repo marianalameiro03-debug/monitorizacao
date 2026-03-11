@@ -1,112 +1,139 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { base44 } from '@/api/base44Client';
+import { supabase } from '@/api/base44Client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { UtensilsCrossed, TrendingUp, TrendingDown, Minus, Calendar } from 'lucide-react';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 const calcularIndiceEstabilidade = (registosSemana) => {
   if (!registosSemana || registosSemana.length < 4) return null;
-  
-  // Calcular variação diária
+
   const porDia = {};
   registosSemana.forEach(r => {
     if (!porDia[r.data]) porDia[r.data] = [];
     porDia[r.data].push(r.nivel_ingestao === 'normal' ? 100 : r.nivel_ingestao === 'parcial' ? 50 : 0);
   });
-  
-  const mediasPorDia = Object.values(porDia).map(valores => 
+
+  const mediasPorDia = Object.values(porDia).map(valores =>
     valores.reduce((a, b) => a + b, 0) / valores.length
   );
-  
+
   if (mediasPorDia.length < 2) return null;
-  
-  // Calcular desvio padrão
+
   const media = mediasPorDia.reduce((a, b) => a + b, 0) / mediasPorDia.length;
   const variancia = mediasPorDia.reduce((sum, val) => sum + Math.pow(val - media, 2), 0) / mediasPorDia.length;
   const desvioPadrao = Math.sqrt(variancia);
-  
-  // Índice: 100 - (desvio normalizado)
   const indice = Math.max(0, Math.min(100, 100 - (desvioPadrao / 50 * 100)));
-  
+
   return Math.round(indice);
 };
 
 const getClassificacaoApetite = (mediaAtual, mediaSemana) => {
-  const diferenca = mediaAtual - mediaSemana;
-  
-  if (mediaAtual >= 85 && Math.abs(diferenca) <= 10) {
+  if (mediaAtual >= 85 && Math.abs(mediaAtual - mediaSemana) <= 10)
     return { label: 'Estável', cor: 'green', descricao: 'O apetite mantém-se consistente e saudável.' };
-  } else if (mediaAtual >= 70 && mediaAtual < 85) {
+  if (mediaAtual >= 70)
     return { label: 'Ligeiramente reduzido', cor: 'yellow', descricao: 'Pequena redução no apetite, comum em variações diárias.' };
-  } else if (mediaAtual >= 50 && mediaAtual < 70) {
+  if (mediaAtual >= 50)
     return { label: 'Reduzido', cor: 'orange', descricao: 'O apetite está abaixo do habitual. Recomenda-se atenção.' };
-  } else if (mediaAtual < 50) {
+  if (mediaAtual < 50)
     return { label: 'Significativamente alterado', cor: 'red', descricao: 'O apetite apresenta alteração significativa que merece acompanhamento.' };
-  }
-  
   return { label: 'Sem dados suficientes', cor: 'gray', descricao: 'Ainda não há dados suficientes para análise.' };
 };
 
 export default function Alimentacao() {
   const [user, setUser] = useState(null);
 
+  // ── Auth ────────────────────────────────────────────────────
   useQuery({
     queryKey: ['currentUser'],
     queryFn: async () => {
-      const userData = await base44.auth.me();
-      setUser(userData);
-      return userData;
+      const { data: { user }, error } = await supabase.auth.getUser();
+      if (error || !user) { window.location.href = '/login'; return null; }
+      setUser(user);
+      return user;
     }
   });
 
+  // ── Ligação Familiar ────────────────────────────────────────
   const { data: ligacao } = useQuery({
     queryKey: ['ligacao-familiar', user?.email],
-    queryFn: () => base44.entities.LigacaoFamiliar.filter({ 
-      familiar_email: user.email,
-      status: 'aprovado'
-    }),
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('LigacaoFamiliar')
+        .select('*')
+        .eq('familiar_email', user.email)
+        .eq('status', 'aprovado')
+        .limit(1)
+        .single();
+      if (error) throw error;
+      return data;
+    },
     enabled: !!user,
-    select: (data) => data[0]
   });
 
+  // ── Residente ───────────────────────────────────────────────
   const { data: residente } = useQuery({
     queryKey: ['residente', ligacao?.residente_id],
-    queryFn: () => base44.entities.Residente.filter({ id: ligacao.residente_id }),
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('Residente')
+        .select('*')
+        .eq('id', ligacao.residente_id)
+        .single();
+      if (error) throw error;
+      return data;
+    },
     enabled: !!ligacao,
-    select: (data) => data[0]
   });
 
   const hoje = new Date().toISOString().split('T')[0];
   const ultimos7Dias = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   const ultimos14Dias = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
+  // ── Alimentação de hoje ─────────────────────────────────────
   const { data: alimentacaoHoje = [], isLoading: loadingHoje } = useQuery({
     queryKey: ['alimentacao-hoje', residente?.id],
-    queryFn: () => base44.entities.RegistoAlimentacao.filter({
-      residente_id: residente.id,
-      data: hoje
-    }),
-    enabled: !!residente
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('RegistoAlimentacao')
+        .select('*')
+        .eq('residente_id', residente.id)
+        .eq('data', hoje);
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!residente,
   });
 
-  const { data: alimentacao7Dias = [], isLoading: loading7Dias } = useQuery({
+  // ── Alimentação últimos 7 dias ──────────────────────────────
+  const { data: alimentacao7Dias = [] } = useQuery({
     queryKey: ['alimentacao-7dias', residente?.id],
-    queryFn: () => base44.entities.RegistoAlimentacao.filter({
-      residente_id: residente.id,
-      data: { $gte: ultimos7Dias }
-    }),
-    enabled: !!residente
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('RegistoAlimentacao')
+        .select('*')
+        .eq('residente_id', residente.id)
+        .gte('data', ultimos7Dias);
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!residente,
   });
 
+  // ── Alimentação últimos 14 dias ─────────────────────────────
   const { data: alimentacao14Dias = [] } = useQuery({
     queryKey: ['alimentacao-14dias', residente?.id],
-    queryFn: () => base44.entities.RegistoAlimentacao.filter({
-      residente_id: residente.id,
-      data: { $gte: ultimos14Dias }
-    }),
-    enabled: !!residente
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('RegistoAlimentacao')
+        .select('*')
+        .eq('residente_id', residente.id)
+        .gte('data', ultimos14Dias);
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!residente,
   });
 
   if (!residente) {
@@ -117,7 +144,7 @@ export default function Alimentacao() {
     );
   }
 
-  // Análise de dados
+  // ── Análise de dados ────────────────────────────────────────
   const calcularMedia = (registos) => {
     if (!registos || registos.length === 0) return 0;
     return registos.reduce((sum, r) => {
@@ -133,12 +160,9 @@ export default function Alimentacao() {
   const indiceEstabilidade = calcularIndiceEstabilidade(alimentacao7Dias);
   const classificacao = getClassificacaoApetite(mediaHoje, media7Dias);
 
-  // Preparar dados para gráfico semanal
   const dadosPorDia = {};
   alimentacao7Dias.forEach(r => {
-    if (!dadosPorDia[r.data]) {
-      dadosPorDia[r.data] = { data: r.data, valores: [] };
-    }
+    if (!dadosPorDia[r.data]) dadosPorDia[r.data] = { data: r.data, valores: [] };
     dadosPorDia[r.data].valores.push(
       r.nivel_ingestao === 'normal' ? 100 : r.nivel_ingestao === 'parcial' ? 50 : 0
     );
@@ -151,16 +175,15 @@ export default function Alimentacao() {
     }))
     .sort((a, b) => new Date(a.data) - new Date(b.data));
 
-  // Tendência
-  const tendencia = mediaHoje > media7Dias + 10 ? 'melhoria' : 
+  const tendencia = mediaHoje > media7Dias + 10 ? 'melhoria' :
                     mediaHoje < media7Dias - 10 ? 'reducao' : 'estavel';
 
   const cores = {
-    green: { bg: 'bg-green-50', border: 'border-green-200', text: 'text-green-700' },
+    green:  { bg: 'bg-green-50',  border: 'border-green-200',  text: 'text-green-700'  },
     yellow: { bg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-700' },
     orange: { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-700' },
-    red: { bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-700' },
-    gray: { bg: 'bg-gray-50', border: 'border-gray-200', text: 'text-gray-700' }
+    red:    { bg: 'bg-red-50',    border: 'border-red-200',    text: 'text-red-700'    },
+    gray:   { bg: 'bg-gray-50',   border: 'border-gray-200',   text: 'text-gray-700'   },
   };
 
   const cor = cores[classificacao.cor];
@@ -175,7 +198,6 @@ export default function Alimentacao() {
 
       {/* Cards Principais */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Classificação do Apetite */}
         <Card className={`${cor.bg} border-2 ${cor.border}`}>
           <CardHeader>
             <CardTitle className="text-sm font-medium text-gray-600">Estado Atual</CardTitle>
@@ -186,7 +208,6 @@ export default function Alimentacao() {
           </CardContent>
         </Card>
 
-        {/* Índice de Estabilidade */}
         <Card>
           <CardHeader>
             <CardTitle className="text-sm font-medium text-gray-600">Índice de Estabilidade</CardTitle>
@@ -196,7 +217,7 @@ export default function Alimentacao() {
               {indiceEstabilidade !== null ? indiceEstabilidade : '—'}
             </div>
             <div className="w-full bg-gray-200 rounded-full h-2">
-              <div 
+              <div
                 className={`h-2 rounded-full ${
                   indiceEstabilidade >= 80 ? 'bg-green-500' :
                   indiceEstabilidade >= 60 ? 'bg-yellow-500' :
@@ -213,7 +234,6 @@ export default function Alimentacao() {
           </CardContent>
         </Card>
 
-        {/* Tendência */}
         <Card>
           <CardHeader>
             <CardTitle className="text-sm font-medium text-gray-600">Tendência</CardTitle>
@@ -228,9 +248,7 @@ export default function Alimentacao() {
                  tendencia === 'reducao' ? 'Em redução' : 'Estável'}
               </span>
             </div>
-            <p className="text-sm text-gray-600">
-              Face à semana passada
-            </p>
+            <p className="text-sm text-gray-600">Face à semana passada</p>
           </CardContent>
         </Card>
       </div>
@@ -285,13 +303,11 @@ export default function Alimentacao() {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="data" />
                 <YAxis domain={[0, 100]} />
-                <Tooltip 
-                  formatter={(value) => [`${value.toFixed(0)}%`, 'Apetite']}
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="media" 
-                  stroke="#3b82f6" 
+                <Tooltip formatter={(value) => [`${value.toFixed(0)}%`, 'Apetite']} />
+                <Line
+                  type="monotone"
+                  dataKey="media"
+                  stroke="#3b82f6"
                   strokeWidth={2}
                   dot={{ fill: '#3b82f6', r: 4 }}
                 />
