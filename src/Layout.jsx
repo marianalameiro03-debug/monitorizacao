@@ -2,6 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from './utils';
 import { Home, Calendar, Bell, Settings, Heart, Stethoscope, UtensilsCrossed } from 'lucide-react';
+import { supabase } from '@/api/base44Client';
 
 export default function Layout({ children, currentPageName }) {
   const [user, setUser] = React.useState(null);
@@ -9,9 +10,8 @@ export default function Layout({ children, currentPageName }) {
   React.useEffect(() => {
     const loadUser = async () => {
       try {
-        const { auth } = await import('./api/base44Client').then(m => m.base44);
-        const userData = await auth.me();
-        setUser(userData);
+        const { data: { user } } = await supabase.auth.getUser();
+        setUser(user);
       } catch (err) {
         // Ignore errors
       }
@@ -24,10 +24,9 @@ export default function Layout({ children, currentPageName }) {
     { name: 'Historico', label: 'Histórico', icon: Calendar },
     { name: 'Alimentacao', label: 'Alimentação', icon: UtensilsCrossed },
     { name: 'Consultas', label: 'Consultas', icon: Stethoscope },
-    { name: 'UploadDados', label: 'Meus Dados', icon: Settings },
-    { name: 'RegistoRefeicoes', label: 'Registo', icon: UtensilsCrossed, staffOnly: true },
     { name: 'Alertas', label: 'Alertas', icon: Bell },
     { name: 'Definicoes', label: 'Definições', icon: Settings },
+    { name: 'RegistoRefeicoes', label: 'Registo', icon: UtensilsCrossed, staffOnly: true },
   ];
 
   return (
@@ -41,7 +40,7 @@ export default function Layout({ children, currentPageName }) {
                 <Heart className="w-6 h-6 text-white" />
               </div>
               <div>
-                <h1 className="text-xl font-bold text-gray-900">Monitor de Atividade</h1>
+                <h1 className="text-xl font-bold text-gray-900">Monilar</h1>
                 <p className="text-xs text-gray-500">Acompanhamento do lar</p>
               </div>
             </div>
@@ -57,7 +56,7 @@ export default function Layout({ children, currentPageName }) {
       {/* Bottom Navigation - Mobile */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg md:hidden">
         <div className="grid grid-cols-5 gap-1 px-2 py-2">
-          {navItems.filter(item => !item.staffOnly || (user && (user.role === 'admin' || user.role === 'staff'))).map((item) => {
+          {navItems.filter(item => !item.staffOnly || (user && (user.user_metadata?.role === 'admin' || user.user_metadata?.role === 'staff'))).map((item) => {
             const Icon = item.icon;
             const isActive = currentPageName === item.name;
             return (
@@ -81,7 +80,7 @@ export default function Layout({ children, currentPageName }) {
       {/* Sidebar Navigation - Desktop */}
       <nav className="hidden md:block fixed left-0 top-16 bottom-0 w-64 bg-white border-r border-gray-200 p-4">
         <div className="space-y-2">
-          {navItems.filter(item => !item.staffOnly || (user && (user.role === 'admin' || user.role === 'staff'))).map((item) => {
+          {navItems.filter(item => !item.staffOnly || (user && (user.user_metadata?.role === 'admin' || user.user_metadata?.role === 'staff'))).map((item) => {
             const Icon = item.icon;
             const isActive = currentPageName === item.name;
             return (
