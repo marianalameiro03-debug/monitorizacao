@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { X, Send, Sparkles, TrendingUp, Calendar } from 'lucide-react';
+import { X, Send, Sparkles } from 'lucide-react';
 
 const ANTHROPIC_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY;
 
@@ -125,14 +125,14 @@ export default function AIAssistantAdvanced({
       const apetiteSemana = calcularApetite(alimentacaoSemana);
       
       const contexto = `
-📊 DADOS DO/A ${residente.nome}:
+📊 DADOS DO/A ${residente?.nome || 'residente'}:
 
 **Hoje (${new Date().toLocaleDateString('pt-PT')})**:
 - Classificação: ${classificacao || 'N/A'}
 - Índice de estabilidade: ${estabilidade?.valor || 'N/A'}/100 (${estabilidade?.texto || 'N/A'})
 - Períodos registados: ${atividadeHoje?.length || 0}
 - Intensidade média: ${mediaMovimento?.toFixed(1) || 'N/A'}
-- Baseline habitual: ${residente.baseline_atividade || 'N/A'}
+- Baseline habitual: ${residente?.baseline_atividade || 'N/A'}
 
 **Esta semana**:
 - Registos totais: ${atividadeSemana?.length || 0}
@@ -151,12 +151,8 @@ ${consulta ? `
 - Resumo: ${consulta.resumo_ia || 'Disponível na secção Consultas'}
 ${consulta.recomendacoes?.length ? `- Recomendações: ${consulta.recomendacoes.join(', ')}` : ''}
 ` : ''}
-
-**Histórico da conversa**:
-${mensagens.slice(-4).map(m => `${m.role === 'user' ? 'Familiar' : 'Assistente'}: ${m.content}`).join('\n')}
       `.trim();
 
-      // Build conversation history for multi-turn support
       const historicoMensagens = mensagens.slice(-8).map(m => ({
         role: m.role,
         content: m.content,
@@ -171,7 +167,7 @@ ${mensagens.slice(-4).map(m => `${m.role === 'user' ? 'Familiar' : 'Assistente'}
           'anthropic-dangerous-direct-browser-access': 'true',
         },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
+          model: 'claude-sonnet-4-6',
           max_tokens: 1024,
           system: SYSTEM_PROMPT + '\n\n' + contexto,
           messages: [
@@ -182,21 +178,21 @@ ${mensagens.slice(-4).map(m => `${m.role === 'user' ? 'Familiar' : 'Assistente'}
       });
 
       if (!response.ok) {
+        const errorData = await response.json();
+        console.error('Anthropic error details:', errorData);
         throw new Error(`Anthropic API error: ${response.status}`);
       }
 
       const data = await response.json();
       const resposta = data.content?.[0]?.text || 'Não foi possível obter uma resposta.';
 
-      const novaResposta = { role: 'assistant', content: resposta };
-      setMensagens(prev => [...prev, novaResposta]);
+      setMensagens(prev => [...prev, { role: 'assistant', content: resposta }]);
     } catch (error) {
       console.error('Erro ao chamar Claude:', error);
-      const erroMsg = { 
+      setMensagens(prev => [...prev, { 
         role: 'assistant', 
         content: '❌ Desculpe, não consegui processar a sua pergunta neste momento. Por favor, tente novamente.' 
-      };
-      setMensagens(prev => [...prev, erroMsg]);
+      }]);
     } finally {
       setLoading(false);
     }
