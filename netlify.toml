@@ -1,4 +1,40 @@
+# ── Force HTTPS ────────────────────────────────────────────────────────────────
+# Redirect any plain-HTTP request to HTTPS before it reaches the app.
+[[redirects]]
+  from = "http://monilar.netlify.app/*"
+  to   = "https://monilar.netlify.app/:splat"
+  status = 301
+  force  = true
+
+# ── SPA catch-all (keep below the HTTPS redirect) ──────────────────────────────
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
+
+# ── Security headers (applied to every response) ───────────────────────────────
+[[headers]]
+  for = "/*"
+  [headers.values]
+    # Tell browsers to only connect over HTTPS for the next year, including subdomains.
+    Strict-Transport-Security = "max-age=31536000; includeSubDomains; preload"
+
+    # Disallow rendering inside iframes (clickjacking protection).
+    X-Frame-Options = "DENY"
+
+    # Prevent MIME-type sniffing.
+    X-Content-Type-Options = "nosniff"
+
+    # Only send the origin (no path) as the Referer header on cross-origin requests.
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+    # Disable browser features that the app does not use.
+    Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=()"
+
+    # Content-Security-Policy:
+    #   • default-src 'self'          – block everything not explicitly listed
+    #   • script-src 'unsafe-inline'  – required for Vite-built bundles (inline scripts)
+    #   • connect-src *.supabase.co   – Supabase REST + realtime WebSocket
+    #   • frame-src accounts.google   – Google OAuth popup
+    #   • img-src https: data: blob:  – remote images, data URIs, Leaflet tiles
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://accounts.google.com; font-src 'self' data:; frame-src https://accounts.google.com; object-src 'none'; base-uri 'self';"

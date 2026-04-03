@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from '@/api/base44Client';
+import { logger } from '@/lib/logger';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,13 +23,16 @@ export default function Login() {
     setLoading(true);
     setErro('');
 
+    logger.auth.loginAttempt(email);
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
     if (error) {
+      logger.auth.loginFailure(email, error.message);
       setErro('Email ou password incorretos. Por favor tente novamente.');
       setLoading(false);
       return;
     }
+    logger.auth.loginSuccess(email);
 
     // Check if user already has an associated resident
     const { data: ligacao } = await supabase
@@ -65,12 +69,15 @@ export default function Login() {
       return;
     }
 
+    logger.auth.signupAttempt(email);
     const { error } = await supabase.auth.signUp({ email, password });
 
     if (error) {
+      logger.auth.signupFailure(email, error.message);
       setErro(error.message);
       setLoading(false);
     } else {
+      logger.auth.signupSuccess(email);
       // Go to association step
       setMode('associate');
       setLoading(false);
@@ -124,11 +131,15 @@ export default function Login() {
   };
 
   const handleGoogleLogin = async () => {
+    logger.auth.oauthAttempt('google');
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: window.location.origin }
     });
-    if (error) setErro('Erro ao entrar com Google. Tente novamente.');
+    if (error) {
+      logger.auth.oauthFailure('google', error.message);
+      setErro('Erro ao entrar com Google. Tente novamente.');
+    }
   };
 
   // ── Association screen ───────────────────────────────────

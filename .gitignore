@@ -2,7 +2,13 @@ node_modules/
 dist/
 dist-electron/
 build/
+# All .env variants — never commit secrets or API keys
 .env
+.env.local
+.env.development
+.env.production
+.env.staging
+.env.*.local
 .DS_Store
 *.log
 electron.js

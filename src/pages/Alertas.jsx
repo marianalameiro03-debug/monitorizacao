@@ -93,10 +93,13 @@ export default function Alertas() {
   // ── Mark as read ─────────────────────────────────────────────
   const marcarLidoMutation = useMutation({
     mutationFn: async (alertaId) => {
+      if (!residente) throw new Error('Sem permissão');
+      // Ownership check: only update alerts that belong to the linked resident
       const { error } = await supabase
         .from('Alerta')
         .update({ lido: true })
-        .eq('id', alertaId);
+        .eq('id', alertaId)
+        .eq('residente_id', residente.id);
       if (error) throw error;
     },
     onSuccess: () => {

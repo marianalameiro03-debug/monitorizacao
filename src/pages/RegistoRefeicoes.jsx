@@ -21,6 +21,7 @@ const niveis = [
 
 export default function RegistoRefeicoes() {
   const [user, setUser] = useState(null);
+  const [role, setRole] = useState(null);
   const queryClient = useQueryClient();
   const hoje = new Date().toISOString().split('T')[0];
 
@@ -30,12 +31,13 @@ export default function RegistoRefeicoes() {
     queryFn: async () => {
       const { data: { user }, error } = await supabase.auth.getUser();
       if (error || !user) { window.location.href = '/login'; return null; }
-      const role = user.user_metadata?.role;
-      if (role !== 'admin' && role !== 'staff') {
+      const userRole = user.user_metadata?.role;
+      if (userRole !== 'admin' && userRole !== 'staff') {
         window.location.href = '/';
         return null;
       }
       setUser(user);
+      setRole(userRole);
       return user;
     }
   });
@@ -71,6 +73,7 @@ export default function RegistoRefeicoes() {
   // ── Criar registo ───────────────────────────────────────────
   const registarMutation = useMutation({
     mutationFn: async ({ residente_id, refeicao, nivel_ingestao }) => {
+      if (role !== 'admin' && role !== 'staff') throw new Error('Sem permissão');
       const { data, error } = await supabase
         .from('RegistoAlimentacao')
         .insert({

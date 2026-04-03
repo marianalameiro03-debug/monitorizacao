@@ -1,5 +1,6 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { supabase } from '@/api/base44Client';
+import { logger } from '@/lib/logger';
 
 const AuthContext = createContext();
 
@@ -19,11 +20,12 @@ export const AuthProvider = ({ children }) => {
         if (session?.user) {
           setUser(session.user);
           setIsAuthenticated(true);
+          logger.auth.sessionRestored(session.user.id);
         } else {
           setIsAuthenticated(false);
         }
       } catch (error) {
-        console.error('Session check failed:', error);
+        logger.auth.sessionCheckFailed(error.message);
         setAuthError({ type: 'unknown', message: error.message });
       } finally {
         setIsLoadingAuth(false);
@@ -33,7 +35,8 @@ export const AuthProvider = ({ children }) => {
     checkSession();
 
     // Listen for auth state changes (login, logout, token refresh)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      logger.auth.stateChange(event, session?.user?.id);
       if (session?.user) {
         setUser(session.user);
         setIsAuthenticated(true);
@@ -48,6 +51,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const logout = async (shouldRedirect = true) => {
+    logger.auth.logout(user?.email);
     await supabase.auth.signOut();
     setUser(null);
     setIsAuthenticated(false);
