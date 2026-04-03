@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/api/base44Client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,71 +12,29 @@ import { Calendar, FileAudio, Upload, Sparkles, ChevronDown, ChevronUp } from 'l
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 
-// ─────────────────────────────────────────────────────────────
-// 🔑 API Keys — add these to your .env file:
-//    VITE_ANTHROPIC_API_KEY=...   (for AI analysis)
-//    VITE_OPENAI_API_KEY=...      (for audio transcription)
-// ─────────────────────────────────────────────────────────────
-const ANTHROPIC_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY;
-const OPENAI_API_KEY = import.meta.env.VITE_OPENAI_API_KEY;
+// API calls for transcription and analysis are handled server-side
+// by the 'process-consultation' Supabase Edge Function.
 
-// ── Transcribe audio using OpenAI Whisper ───────────────────
-const transcribeAudio = async (file) => {
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('model', 'whisper-1');
-  formData.append('language', 'pt');
+// Generates a short-lived signed URL so audio never leaks via a permanent public link.
+// Falls back to legacy full URLs stored before this change.
+function AudioPlayer({ storagePath }) {
+  const [src, setSrc] = useState(null);
 
-  const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` },
-    body: formData,
-  });
+  useEffect(() => {
+    if (!storagePath) return;
+    if (storagePath.startsWith('http')) {
+      setSrc(storagePath); // legacy record — already a URL
+      return;
+    }
+    supabase.storage
+      .from('consultas-audio')
+      .createSignedUrl(storagePath, 3600)
+      .then(({ data }) => { if (data?.signedUrl) setSrc(data.signedUrl); });
+  }, [storagePath]);
 
-  if (!response.ok) throw new Error('Erro na transcrição do áudio');
-  const data = await response.json();
-  return data.text;
-};
-
-// ── Analyse transcription using Anthropic Claude ────────────
-const analyseTranscription = async (transcricao) => {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1024,
-      messages: [{
-        role: 'user',
-        content: `
-Analisa esta transcrição de uma consulta médica e devolve um resumo estruturado em linguagem simples e acessível para familiares.
-
-Transcrição:
-${transcricao}
-
-Devolve APENAS um JSON válido com esta estrutura, sem mais nenhum texto:
-{
-  "resumo_ia": "Resumo simples e claro da consulta (2-3 parágrafos)",
-  "temas_principais": ["tema 1", "tema 2", "tema 3"],
-  "recomendacoes": ["recomendação 1", "recomendação 2"],
-  "proximos_passos": "Descrição dos próximos passos mencionados"
+  if (!src) return null;
+  return <audio controls className="w-full"><source src={src} /></audio>;
 }
-        `.trim()
-      }]
-    }),
-  });
-
-  if (!response.ok) throw new Error('Erro na análise da consulta');
-  const data = await response.json();
-  const text = data.content?.[0]?.text || '{}';
-  const clean = text.replace(/```json|```/g, '').trim();
-  return JSON.parse(clean);
-};
 
 export default function Consultas() {
   const [user, setUser] = useState(null);
@@ -160,28 +118,25 @@ export default function Consultas() {
   // ── Upload + Process Mutation ───────────────────────────────
   const uploadMutation = useMutation({
     mutationFn: async (data) => {
-      // 1. Upload audio to Supabase Storage
+      // 1. Upload audio to Supabase Storage (private bucket)
       setUploadingAudio(true);
       const fileName = `${Date.now()}-${data.audio_file.name}`;
-      const { data: uploadData, error: uploadError } = await supabase.storage
+      const { error: uploadError } = await supabase.storage
         .from('consultas-audio')
         .upload(fileName, data.audio_file);
       if (uploadError) throw uploadError;
-
-      const { data: { publicUrl } } = supabase.storage
-        .from('consultas-audio')
-        .getPublicUrl(fileName);
       setUploadingAudio(false);
 
-      // 2. Transcribe audio with OpenAI Whisper
+      // 2. Transcribe + analyse via Edge Function (keeps API keys server-side)
       setProcessingAudio(true);
-      const transcricao = await transcribeAudio(data.audio_file);
-
-      // 3. Analyse transcription with Claude
-      const analise = await analyseTranscription(transcricao);
+      const { data: result, error: fnError } = await supabase.functions.invoke(
+        'process-consultation',
+        { body: { storagePath: fileName } }
+      );
+      if (fnError) throw fnError;
       setProcessingAudio(false);
 
-      // 4. Save to Supabase
+      // 3. Save to Supabase — audio_url stores the storage path, not a public URL
       const { data: consulta, error: insertError } = await supabase
         .from('Consulta')
         .insert({
@@ -189,12 +144,12 @@ export default function Consultas() {
           data_consulta: data.data_consulta,
           tipo_consulta: data.tipo_consulta,
           especialidade: data.especialidade,
-          audio_url: publicUrl,
-          transcricao,
-          resumo_ia: analise.resumo_ia,
-          temas_principais: analise.temas_principais,
-          recomendacoes: analise.recomendacoes,
-          proximos_passos: analise.proximos_passos,
+          audio_url: fileName,
+          transcricao: result.transcricao,
+          resumo_ia: result.resumo_ia,
+          temas_principais: result.temas_principais,
+          recomendacoes: result.recomendacoes,
+          proximos_passos: result.proximos_passos,
           carregado_por: user.email,
           notas_adicionais: data.notas_adicionais,
         })
@@ -435,9 +390,7 @@ export default function Consultas() {
 
                   {consulta.audio_url && (
                     <div className="pt-4 border-t">
-                      <audio controls className="w-full">
-                        <source src={consulta.audio_url} />
-                      </audio>
+                      <AudioPlayer storagePath={consulta.audio_url} />
                     </div>
                   )}
 

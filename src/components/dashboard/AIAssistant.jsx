@@ -3,13 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { X, Send, Sparkles } from 'lucide-react';
+import { supabase } from '@/api/base44Client';
 
-// ─────────────────────────────────────────────────────────────
-// 🔑 Add your Anthropic API key here, or better yet, store it
-//    in a .env file as VITE_ANTHROPIC_API_KEY and reference it
-//    as import.meta.env.VITE_ANTHROPIC_API_KEY
-// ─────────────────────────────────────────────────────────────
-const ANTHROPIC_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY;
+// API calls are proxied through the 'ai-assistant' Supabase Edge Function.
 
 const sugestoesPadrao = [
   "Como foi o dia hoje?",
@@ -67,32 +63,13 @@ REGRAS CRÍTICAS:
 - Se dados insuficientes, declarar claramente
       `.trim();
 
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': ANTHROPIC_API_KEY,
-          'anthropic-version': '2023-06-01',
-          // NOTE: Direct API calls from the browser expose your API key to users.
-          // For production, proxy this request through your own backend server.
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 1024,
-          system: contexto,
-          messages: [
-            { role: 'user', content: pergunta }
-          ],
-        }),
+      const { data, error } = await supabase.functions.invoke('ai-assistant', {
+        body: { system: contexto, messages: [{ role: 'user', content: pergunta }] },
       });
 
-      if (!response.ok) {
-        throw new Error(`Anthropic API error: ${response.status}`);
-      }
+      if (error) throw error;
 
-      const data = await response.json();
-      const resposta = data.content?.[0]?.text || 'Não foi possível obter uma resposta.';
+      const resposta = data?.response || 'Não foi possível obter uma resposta.';
 
       const novaResposta = { role: 'assistant', content: resposta };
       setMensagens(prev => [...prev, novaResposta]);

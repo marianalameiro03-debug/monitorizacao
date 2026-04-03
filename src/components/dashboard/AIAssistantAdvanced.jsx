@@ -3,9 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { X, Send, Sparkles } from 'lucide-react';
+import { supabase } from '@/api/base44Client';
 
-const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY;
-const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+// API calls are proxied through the 'ai-assistant-advanced' Supabase Edge Function.
 
 const SYSTEM_PROMPT = `
 És um assistente de apoio a familiares de pessoas que vivem num lar de idosos chamado Monilar.
@@ -120,31 +120,16 @@ export default function AIAssistantAdvanced({
         content: m.content,
       }));
 
-      const response = await fetch(GROQ_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${GROQ_API_KEY}`,
+      const { data, error } = await supabase.functions.invoke('ai-assistant-advanced', {
+        body: {
+          system: SYSTEM_PROMPT + '\n\nInformação disponível: ' + contexto,
+          messages: [...historicoMensagens, { role: 'user', content: pergunta }],
         },
-        body: JSON.stringify({
-          model: 'llama-3.3-70b-versatile',
-          max_tokens: 512,
-          messages: [
-            { role: 'system', content: SYSTEM_PROMPT + '\n\nInformação disponível: ' + contexto },
-            ...historicoMensagens,
-            { role: 'user', content: pergunta }
-          ],
-        }),
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error('Groq error:', errorData);
-        throw new Error(`Groq API error: ${response.status}`);
-      }
+      if (error) throw error;
 
-      const data = await response.json();
-      const resposta = data.choices?.[0]?.message?.content || 'Não foi possível obter uma resposta.';
+      const resposta = data?.response || 'Não foi possível obter uma resposta.';
 
       setMensagens(prev => [...prev, { role: 'assistant', content: resposta }]);
     } catch (error) {

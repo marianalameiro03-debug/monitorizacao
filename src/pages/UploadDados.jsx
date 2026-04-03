@@ -7,13 +7,8 @@ import { Upload, Check, AlertCircle, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import Papa from 'papaparse';
 
-// ─────────────────────────────────────────────────────────────
-// 🔑 API Keys from .env:
-//    VITE_ANTHROPIC_API_KEY=...
-//    VITE_OPENAI_API_KEY=...
-// ─────────────────────────────────────────────────────────────
-const ANTHROPIC_API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY;
-const OPENAI_API_KEY    = import.meta.env.VITE_OPENAI_API_KEY;
+// API calls for transcription and analysis are handled server-side
+// by the 'process-consultation' Supabase Edge Function.
 
 const tiposUpload = [
   {
@@ -50,62 +45,6 @@ const parseCSV = (file) => new Promise((resolve, reject) => {
   });
 });
 
-// ── Transcribe audio with OpenAI Whisper ────────────────────
-const transcribeAudio = async (file) => {
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('model', 'whisper-1');
-  formData.append('language', 'pt');
-
-  const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` },
-    body: formData,
-  });
-  if (!response.ok) throw new Error('Erro na transcrição do áudio');
-  const data = await response.json();
-  return data.text;
-};
-
-// ── Analyse transcription with Claude ───────────────────────
-const analyseTranscription = async (transcricao) => {
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1024,
-      messages: [{
-        role: 'user',
-        content: `Analisa esta transcrição de consulta médica e extrai:
-- Resumo claro para familiares
-- Temas principais discutidos
-- Recomendações médicas
-- Próximos passos
-
-Transcrição: ${transcricao}
-
-Devolve APENAS um JSON válido com esta estrutura, sem mais nenhum texto:
-{
-  "resumo_ia": "...",
-  "temas_principais": ["...", "..."],
-  "recomendacoes": ["...", "..."],
-  "proximos_passos": "..."
-}`
-      }]
-    }),
-  });
-  if (!response.ok) throw new Error('Erro na análise da consulta');
-  const data = await response.json();
-  const text = data.content?.[0]?.text || '{}';
-  return JSON.parse(text.replace(/```json|```/g, '').trim());
-};
-
 export default function UploadDados() {
   const [user, setUser] = useState(null);
   const [tipoSelecionado, setTipoSelecionado] = useState(null);
@@ -121,6 +60,11 @@ export default function UploadDados() {
     queryFn: async () => {
       const { data: { user }, error } = await supabase.auth.getUser();
       if (error || !user) { window.location.href = '/login'; return null; }
+      const role = user.user_metadata?.role;
+      if (role !== 'admin' && role !== 'staff') {
+        window.location.href = '/';
+        return null;
+      }
       setUser(user);
       return user;
     }
@@ -148,37 +92,44 @@ export default function UploadDados() {
       return;
     }
 
+    // Validate that the selected residenteId came from the authorised list
+    const residenteValido = residentes.find(r => String(r.id) === String(residenteId));
+    if (!residenteValido) {
+      toast.error('Residente inválido');
+      return;
+    }
+
     setProcessando(true);
     setResultado(null);
 
     try {
       if (tipoSelecionado.id === 'consultas') {
-        // ── 1. Upload audio to Supabase Storage ──────────────
+        // ── 1. Upload audio to Supabase Storage (private bucket) ──
         const fileName = `${Date.now()}-${ficheiro.name}`;
         const { error: uploadError } = await supabase.storage
           .from('consultas-audio')
           .upload(fileName, ficheiro);
         if (uploadError) throw uploadError;
 
-        const { data: { publicUrl } } = supabase.storage
-          .from('consultas-audio')
-          .getPublicUrl(fileName);
-
-        // ── 2. Transcribe ─────────────────────────────────────
+        // ── 2. Transcribe + analyse via Edge Function ─────────────
         toast.info('A transcrever áudio... Isto pode demorar alguns segundos.');
-        const transcricao = await transcribeAudio(ficheiro);
+        const { data: result, error: fnError } = await supabase.functions.invoke(
+          'process-consultation',
+          { body: { storagePath: fileName } }
+        );
+        if (fnError) throw fnError;
 
-        // ── 3. Analyse ────────────────────────────────────────
-        const analise = await analyseTranscription(transcricao);
-
-        // ── 4. Save to Supabase ───────────────────────────────
+        // ── 3. Save to Supabase — audio_url stores the storage path ─
         const { error: insertError } = await supabase.from('Consulta').insert({
           residente_id: residenteId,
           data_consulta: new Date().toISOString().split('T')[0],
           tipo_consulta: 'rotina',
-          audio_url: publicUrl,
-          transcricao,
-          ...analise,
+          audio_url: fileName,
+          transcricao: result.transcricao,
+          resumo_ia: result.resumo_ia,
+          temas_principais: result.temas_principais,
+          recomendacoes: result.recomendacoes,
+          proximos_passos: result.proximos_passos,
           carregado_por: user.email,
         });
         if (insertError) throw insertError;
